@@ -1,14 +1,14 @@
 ﻿@echo off
 REM ============================================================
-REM  Voice Royale â€” Full build: PyInstaller + Windows Installer
+REM  One Voice Royale â€” Full build: PyInstaller + Windows Installer
 REM
-REM  Output: installer_output\Voice_Royale_Setup_%VERSION%.exe
+REM  Output: installer_output\One_Voice_Royale_Setup_%VERSION%.exe
 REM ============================================================
 
-set NAME=Voice Royale
+set NAME=One Voice Royale
 set SCRIPT=ai_voice_app.py
 set VENV_PYTHON=.venv\Scripts\python.exe
-set VERSION=1.3.6
+set VERSION=1.3.92
 set ISCC="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 set INNO_INSTALLER_URL=https://files.jrsoftware.org/is/6/innosetup-6.3.3.exe
 set INNO_TEMP=%TEMP%\innosetup_installer.exe
@@ -66,9 +66,9 @@ echo ============================================================
 
 echo Building Stream Deck plugin...
 powershell -NoProfile -Command ^
-    "Compress-Archive -Path 'streamdeck-plugin\com.voiceroyale.sdPlugin' -DestinationPath 'streamdeck-plugin\_tmp.zip' -Force; Rename-Item 'streamdeck-plugin\_tmp.zip' 'com.voiceroyale.streamDeckPlugin'"
+    "Compress-Archive -Path 'streamdeck-plugin\com.onevoiceroyale.sdPlugin' -DestinationPath 'streamdeck-plugin\_tmp.zip' -Force; Rename-Item 'streamdeck-plugin\_tmp.zip' 'com.onevoiceroyale.streamDeckPlugin'"
 
-if not exist "streamdeck-plugin\com.voiceroyale.streamDeckPlugin" (
+if not exist "streamdeck-plugin\com.onevoiceroyale.streamDeckPlugin" (
     echo.
     echo *** Stream Deck plugin build FAILED ***
     pause
@@ -122,7 +122,7 @@ echo  Step 4/4 â€” Code Signing
 echo ============================================================
 
 set SIGNTOOL="C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe"
-set INSTALLER=installer_output\Voice_Royale_Setup_%VERSION%.exe
+set INSTALLER=installer_output\One_Voice_Royale_Setup_%VERSION%.exe
 
 REM Load signing variables from .env if present
 if exist .env (

@@ -1,4 +1,4 @@
-# Voice Royale
+# One Voice Royale
 
 Copyright (c) 2026 BluexDEV Softwares. All rights reserved.
 Use permitted. Modification and redistribution of source code prohibited — see [LICENSE](LICENSE).
@@ -9,9 +9,9 @@ Windows + macOS desktop app (PyQt6) that listens for a wake-word, transcribes yo
 
 | Platform | Link |
 |---|---|
-| **Windows** | [Voice_Royale_Setup_1.3.31.exe](https://github.com/JuhaFIN1/voice-royale/releases/latest) — no Python needed |
-| **macOS Apple Silicon** (M1/M2/M3) | [Voice_Royale_1.3.31_macOS_arm64.dmg](https://github.com/JuhaFIN1/voice-royale/releases/latest) |
-| **macOS Intel** (x86_64) | [Voice_Royale_1.3.31_macOS_x86_64.dmg](https://github.com/JuhaFIN1/voice-royale/releases/latest) |
+| **Windows** | [One_Voice_Royale_Setup_1.3.92.exe](https://github.com/JuhaFIN1/one-voice-royale/releases/latest) — no Python needed |
+| **macOS Apple Silicon** (M1/M2/M3) | [One_Voice_Royale_1.3.92_macOS_arm64.dmg](https://github.com/JuhaFIN1/one-voice-royale/releases/latest) |
+| **macOS Intel** (x86_64) | [One_Voice_Royale_1.3.92_macOS_x86_64.dmg](https://github.com/JuhaFIN1/one-voice-royale/releases/latest) |
 
 > **Windows SmartScreen warning?** Click **"More info"** → **"Run anyway"**.
 > This appears because the installer uses a self-signed certificate. The app is safe.
@@ -53,7 +53,7 @@ Windows + macOS desktop app (PyQt6) that listens for a wake-word, transcribes yo
 
 ## Installation (Windows)
 
-1. Download `Voice_Royale_Setup_1.3.31.exe` from [Releases](https://github.com/JuhaFIN1/voice-royale/releases/latest) — no Python needed
+1. Download `One_Voice_Royale_Setup_1.3.92.exe` from [Releases](https://github.com/JuhaFIN1/one-voice-royale/releases/latest) — no Python needed
 2. Run the installer — it creates Start Menu shortcuts and an optional desktop icon
 3. On first launch the **Setup Wizard** opens automatically:
    - **Step 1/6** — install required Python packages automatically
@@ -72,20 +72,20 @@ Upgrading: just run the new installer over the old one. Your API key, settings, 
 ```
 RodeCaster Chat mic → Voicemeeter Hardware Input 1 → B1 bus ─┐
                                                                ├→ Voicemeeter Out B1 → Windows default mic → Fortnite / Discord
-Voice Royale TTS/Soundboard → Voicemeeter Input → B1 bus ────┘
+One Voice Royale TTS/Soundboard → Voicemeeter Input → B1 bus ────┘
 ```
 
 The wizard sets **Windows default microphone = Voicemeeter Out B1** automatically. Any game or app that uses the Windows default mic will hear both your physical mic and TTS/soundboard audio without any in-game configuration.
 
 ## Installation (macOS)
 
-1. Download the correct DMG from [Releases](https://github.com/JuhaFIN1/voice-royale/releases/latest):
+1. Download the correct DMG from [Releases](https://github.com/JuhaFIN1/one-voice-royale/releases/latest):
    - **arm64** — Mac with M1, M2, or M3 chip (2020 and later)
    - **x86_64** — older Intel Mac
-2. Open the DMG and drag **Voice Royale** to Applications
+2. Open the DMG and drag **One Voice Royale** to Applications
 3. First launch: right-click → **Open** to bypass Gatekeeper (app is ad-hoc signed, not notarized)
 4. Grant microphone and accessibility permissions when prompted
-5. Global hotkeys require **Accessibility** permission: System Settings → Privacy & Security → Accessibility → enable Voice Royale
+5. Global hotkeys require **Accessibility** permission: System Settings → Privacy & Security → Accessibility → enable One Voice Royale
 
 ## Optional packages
 

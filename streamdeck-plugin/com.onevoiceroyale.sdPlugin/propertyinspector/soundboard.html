@@ -60,7 +60,7 @@ function connectElgatoStreamDeckSocket(port, uuid, registerEvent, info) {
     };
 }
 
-// ─── Load pages/slots from Voice Royale ──────────────────────────────────────
+// ─── Load pages/slots from One Voice Royale ──────────────────────────────────────
 async function loadFromApp() {
     statusEl.textContent = 'Haetaan…';
     try {
@@ -71,7 +71,7 @@ async function loadFromApp() {
         buildPageDropdown();
         statusEl.textContent = pages.length ? '' : 'Ei sivuja';
     } catch {
-        statusEl.textContent = '⚠ Voice Royale ei käynnissä';
+        statusEl.textContent = '⚠ One Voice Royale ei käynnissä';
     }
 }
 

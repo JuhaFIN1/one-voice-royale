@@ -1,4 +1,4 @@
-# Voice Royale — Claude Code context
+# One Voice Royale — Claude Code context
 
 ## Projekti
 
@@ -65,7 +65,7 @@ self._sd_state_timer.start(1500)
 
 ## Stream Deck Plugin (streamdeck-plugin/)
 
-`streamdeck-plugin/com.voiceroyale.sdPlugin/` — virallinen Elgato-plugin.
+`streamdeck-plugin/com.onevoiceroyale.sdPlugin/` — virallinen Elgato-plugin.
 
 - `manifest.json` — v1.2.7, **`CategoryIcon` vaaditaan SD 7.x:ssä** (puuttuva → "unable to install")
 - `plugin.html` — HTML-pohjainen plugin (native WebSocket + fetch, ei Node.js); `CodePath: "plugin.html"`
@@ -74,7 +74,7 @@ self._sd_state_timer.start(1500)
 - `icons/plugin.png` (72×72), `icons/plugin@2x.png` (144×144)
 - `build-plugin.bat` — pakkaa `.streamDeckPlugin`-tiedostoksi
 
-**Asennus (manuaalinen):** pura zip → `%APPDATA%\Elgato\StreamDeck\Plugins\com.voiceroyale.sdPlugin\`
+**Asennus (manuaalinen):** pura zip → `%APPDATA%\Elgato\StreamDeck\Plugins\com.onevoiceroyale.sdPlugin\`
 
 **Action-nimet** (POST /action/{name}):
 `record_toggle`, `wake_listen_toggle`, `speak`, `stop_recording`, `settings`, `tts_toggle`,
@@ -113,6 +113,15 @@ Self-signed cert kehityskäyttöön (ei luotettu SmartScreenissä).
 - Paikallinen build: `build_app.bat` lukee `.env`:stä `SIGN_CERT_PATH` + `SIGN_CERT_PASSWORD`, ajaa signtool automaattisesti
 - CI/GitHub Actions: secretit `SIGN_CERT_BASE64` + `SIGN_CERT_PASSWORD` GitHubin Settings → Secrets → Actions
 - **Ei koskaan githubiin:** `.env`, `certs/`, `*.pfx`
+
+## Nimenmuutos: Voice Royale → One Voice Royale (v1.3.92)
+
+Sovellus nimettiin uudelleen "Voice Royale" → "One Voice Royale" (repo: `voice-royale` → `one-voice-royale`). Jo asennetuille käyttäjille päivitys hoitaa migraation automaattisesti:
+
+- `get_base_path()` kopioi `%APPDATA%\Voice Royale` → `%APPDATA%\One Voice Royale` ensimmäisellä käynnistyksellä jos uutta kansiota ei vielä ole
+- `_get_autostart_state()` migroi vanhan `Voice Royale`-nimisen autostart-rekisteriavaimen uudeksi `One Voice Royale`-avaimeksi lukuhetkellä
+- `installer.iss`: `[InstallDelete]` siivoaa vanhan `Voice Royale.exe`:n, `AppId`-GUID pysyy samana jotta Inno Setup tunnistaa päivityksen (ei uutta rinnakkaista asennusta)
+- Fedora RPM: `one-voice-royale.spec` sisältää `Obsoletes`/`Provides voice-royale` jotta `dnf` päivittää paikalleen
 
 ## Releases
 

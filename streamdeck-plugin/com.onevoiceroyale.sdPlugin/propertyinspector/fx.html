@@ -24,7 +24,7 @@
   const presetEl = document.getElementById('preset');
   function sendSettings() {
     const settings = { preset: presetEl.value };
-    const json = JSON.stringify({ event: 'sendToPlugin', action: 'com.voiceroyale.fx', payload: { settings } });
+    const json = JSON.stringify({ event: 'sendToPlugin', action: 'com.onevoiceroyale.fx', payload: { settings } });
     window.opener && window.opener.postMessage(json, '*');
   }
   presetEl.addEventListener('change', sendSettings);

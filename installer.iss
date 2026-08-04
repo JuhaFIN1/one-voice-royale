@@ -1,26 +1,27 @@
 [Setup]
 AppId={{F3A7C2E1-9B4D-4F8A-BC23-1E5D7A9F0C42}
-AppName=Voice Royale
-AppVersion=1.3.46
+AppName=One Voice Royale
+AppVersion=1.3.92
 AppPublisher=BluexDEV Softwares
-AppPublisherURL=https://github.com/JuhaFIN1/voice-royale
-AppSupportURL=https://github.com/JuhaFIN1/voice-royale/issues
-DefaultDirName={autopf}\Voice Royale
-DefaultGroupName=Voice Royale
+AppPublisherURL=https://github.com/JuhaFIN1/one-voice-royale
+AppSupportURL=https://github.com/JuhaFIN1/one-voice-royale/issues
+DefaultDirName={autopf}\One Voice Royale
+DefaultGroupName=One Voice Royale
 AllowNoIcons=yes
 OutputDir=installer_output
-OutputBaseFilename=Voice_Royale_Setup_1.3.25
+OutputBaseFilename=One_Voice_Royale_Setup_1.3.92
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
-UninstallDisplayIcon={app}\Voice Royale.exe
+UninstallDisplayIcon={app}\One Voice Royale.exe
 DisableProgramGroupPage=no
 SetupIconFile=iconimage.ico
-UninstallDisplayName=Voice Royale
-; Close a running instance automatically before overwriting files
+UninstallDisplayName=One Voice Royale
+; Close a running instance automatically before overwriting files (old and new exe name,
+; since an in-place upgrade keeps {app} pointed at whatever pre-rename dir the AppId used)
 CloseApplications=yes
-CloseApplicationsFilter=Voice Royale.exe
+CloseApplicationsFilter=Voice Royale.exe,One Voice Royale.exe
 RestartApplications=no
 
 [Languages]
@@ -32,28 +33,30 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 [InstallDelete]
 ; Remove leftover exe from the pre-rename "AI Voice Router" installs
 Type: files; Name: "{app}\AI Voice Router.exe"
+; Remove leftover exe from the pre-rename "Voice Royale" installs
+Type: files; Name: "{app}\Voice Royale.exe"
 
 [Files]
-Source: "dist\Voice Royale\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\One Voice Royale\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "credentials.env.example"; DestDir: "{app}"; Flags: ignoreversion
 Source: "iconimage.ico"; DestDir: "{app}"; Flags: ignoreversion
-Source: "streamdeck-plugin\com.voiceroyale.streamDeckPlugin"; DestDir: "{app}\StreamDeck"; Flags: ignoreversion
+Source: "streamdeck-plugin\com.onevoiceroyale.streamDeckPlugin"; DestDir: "{app}\StreamDeck"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Voice Royale"; Filename: "{app}\Voice Royale.exe"; IconFilename: "{app}\iconimage.ico"
+Name: "{group}\One Voice Royale"; Filename: "{app}\One Voice Royale.exe"; IconFilename: "{app}\iconimage.ico"
 Name: "{group}\Edit credentials (API keys)"; Filename: "notepad.exe"; Parameters: "{app}\credentials.env.example"
-Name: "{group}\Install Stream Deck Plugin"; Filename: "{app}\StreamDeck\com.voiceroyale.streamDeckPlugin"
-Name: "{group}\Uninstall Voice Royale"; Filename: "{uninstallexe}"
-Name: "{commondesktop}\Voice Royale"; Filename: "{app}\Voice Royale.exe"; IconFilename: "{app}\iconimage.ico"; Tasks: desktopicon
+Name: "{group}\Install Stream Deck Plugin"; Filename: "{app}\StreamDeck\com.onevoiceroyale.streamDeckPlugin"
+Name: "{group}\Uninstall One Voice Royale"; Filename: "{uninstallexe}"
+Name: "{commondesktop}\One Voice Royale"; Filename: "{app}\One Voice Royale.exe"; IconFilename: "{app}\iconimage.ico"; Tasks: desktopicon
 
 [Run]
 ; Rebuild Windows icon cache so the new shortcut icon appears immediately
 Filename: "{cmd}"; Parameters: "/c ie4uinit.exe -show"; Flags: runhidden waituntilidle
-Filename: "{app}\Voice Royale.exe"; Description: "Launch Voice Royale"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\One Voice Royale.exe"; Description: "Launch One Voice Royale"; Flags: nowait postinstall skipifsilent
 
 [Messages]
-WelcomeLabel2=This will install Voice Royale on your computer.%n%nThe app includes a first-run setup wizard that guides you through%nconfiguring your OpenAI API key and audio devices.%n%nClick Next to continue.
-FinishedLabel=Voice Royale has been installed successfully.%n%nClick Finish to launch the app. The setup wizard will guide you through the initial configuration.
+WelcomeLabel2=This will install One Voice Royale on your computer.%n%nThe app includes a first-run setup wizard that guides you through%nconfiguring your OpenAI API key and audio devices.%n%nClick Next to continue.
+FinishedLabel=One Voice Royale has been installed successfully.%n%nClick Finish to launch the app. The setup wizard will guide you through the initial configuration.
 
 [Code]
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -63,7 +66,7 @@ var
 begin
   if CurUninstallStep = usUninstall then
   begin
-    AppDataDir := ExpandConstant('{userappdata}\Voice Royale');
+    AppDataDir := ExpandConstant('{userappdata}\One Voice Royale');
     if DirExists(AppDataDir) then
     begin
       Answer := MsgBox(

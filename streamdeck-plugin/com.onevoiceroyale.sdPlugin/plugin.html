@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"></head>
 <body>
 <script>
-// Voice Royale Stream Deck Plugin — HTML-based (SDK v2)
+// One Voice Royale Stream Deck Plugin — HTML-based (SDK v2)
 // Uses native browser WebSocket + fetch — no npm dependencies.
 // POST requests use no body/headers → simple CORS request, no preflight needed.
 
@@ -12,16 +12,16 @@ const VR_BASE = `http://127.0.0.1:${VR_PORT}`;
 
 // Maps Stream Deck action UUID → VR HTTP action name (null = built dynamically)
 const ACTION_MAP = {
-    "com.voiceroyale.record.toggle":  "record_toggle",
-    "com.voiceroyale.wake.toggle":    "wake_listen_toggle",
-    "com.voiceroyale.speak":          "speak",
-    "com.voiceroyale.stop":           "stop_recording",
-    "com.voiceroyale.lang":           null,  // lang_{language}
-    "com.voiceroyale.soundboard":     null,  // soundboard_{page}_{slot}
-    "com.voiceroyale.sb.page.goto":    null,  // sb_page_goto_{page}
-    "com.voiceroyale.fx":             null,  // fx_{preset}
-    "com.voiceroyale.tts.toggle":     "tts_toggle",
-    "com.voiceroyale.settings":       "settings",
+    "com.onevoiceroyale.record.toggle":  "record_toggle",
+    "com.onevoiceroyale.wake.toggle":    "wake_listen_toggle",
+    "com.onevoiceroyale.speak":          "speak",
+    "com.onevoiceroyale.stop":           "stop_recording",
+    "com.onevoiceroyale.lang":           null,  // lang_{language}
+    "com.onevoiceroyale.soundboard":     null,  // soundboard_{page}_{slot}
+    "com.onevoiceroyale.sb.page.goto":    null,  // sb_page_goto_{page}
+    "com.onevoiceroyale.fx":             null,  // fx_{preset}
+    "com.onevoiceroyale.tts.toggle":     "tts_toggle",
+    "com.onevoiceroyale.settings":       "settings",
 };
 
 const contexts = {};      // context → action UUID
@@ -71,7 +71,7 @@ function handleEvent(msg) {
             contexts[context] = action;
             if (payload && payload.settings) settings[context] = payload.settings;
             applyState(context, action, lastState);
-            if (action === "com.voiceroyale.soundboard") fetchSoundboardImage(context);
+            if (action === "com.onevoiceroyale.soundboard") fetchSoundboardImage(context);
             break;
         case "willDisappear":
             delete contexts[context];
@@ -82,8 +82,8 @@ function handleEvent(msg) {
             if (payload && payload.settings) {
                 settings[context] = payload.settings;
                 delete imageKeys[context];  // force image reload with new settings
-                if (contexts[context] === "com.voiceroyale.soundboard") {
-                    applyState(context, "com.voiceroyale.soundboard", lastState);
+                if (contexts[context] === "com.onevoiceroyale.soundboard") {
+                    applyState(context, "com.onevoiceroyale.soundboard", lastState);
                     fetchSoundboardImage(context);
                 }
             }
@@ -97,7 +97,7 @@ async function onKeyDown(action, context, payload) {
     let vrAction;
 
     switch (action) {
-        case "com.voiceroyale.soundboard": {
+        case "com.onevoiceroyale.soundboard": {
             const page = ctx.page !== undefined ? Number(ctx.page) : 0;
             const slot = ctx.slot !== undefined ? String(ctx.slot) : '0';
             if (slot.startsWith('f')) {
@@ -109,13 +109,13 @@ async function onKeyDown(action, context, payload) {
             }
             break;
         }
-        case "com.voiceroyale.lang":
+        case "com.onevoiceroyale.lang":
             vrAction = `lang_${ctx.language || "English"}`;
             break;
-        case "com.voiceroyale.fx":
+        case "com.onevoiceroyale.fx":
             vrAction = `fx_${ctx.preset || "Normal"}`;
             break;
-        case "com.voiceroyale.sb.page.goto": {
+        case "com.onevoiceroyale.sb.page.goto": {
             const page = ctx.page !== undefined ? Number(ctx.page) : 0;
             vrAction = `sb_page_goto_${page}`;
             break;
@@ -166,24 +166,24 @@ function applyState(context, action, state) {
     if (!state || Object.keys(state).length === 0) return;
 
     switch (action) {
-        case "com.voiceroyale.record.toggle":
+        case "com.onevoiceroyale.record.toggle":
             setState(context, state.recording ? 1 : 0);
             setTitle(context, state.recording ? "REC..." : "Record");
             break;
-        case "com.voiceroyale.wake.toggle":
+        case "com.onevoiceroyale.wake.toggle":
             setState(context, state.listening ? 1 : 0);
             setTitle(context, state.listening ? "Listening" : "Listen");
             break;
-        case "com.voiceroyale.lang":
+        case "com.onevoiceroyale.lang":
             setTitle(context, state.language || "Lang");
             break;
-        case "com.voiceroyale.fx":
+        case "com.onevoiceroyale.fx":
             setTitle(context, state.fx_preset || "FX");
             break;
-        case "com.voiceroyale.tts.toggle":
+        case "com.onevoiceroyale.tts.toggle":
             setTitle(context, (state.tts_backend || "TTS").split(" ")[0]);
             break;
-        case "com.voiceroyale.soundboard": {
+        case "com.onevoiceroyale.soundboard": {
             const ctx = settings[context] || {};
             const page = ctx.page !== undefined ? Number(ctx.page) : 0;
             const slot = ctx.slot !== undefined ? String(ctx.slot) : '0';
@@ -209,7 +209,7 @@ function applyState(context, action, state) {
             fetchSoundboardImage(context);
             break;
         }
-        case "com.voiceroyale.sb.page.goto": {
+        case "com.onevoiceroyale.sb.page.goto": {
             const ctx = settings[context] || {};
             const page = ctx.page !== undefined ? Number(ctx.page) : 0;
             const pages = state.soundboard_pages || [];

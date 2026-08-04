@@ -1,12 +1,12 @@
 {
-    "Name": "Voice Royale",
+    "Name": "One Voice Royale",
     "Version": "1.2.3",
     "Author": "BluexDEV Softwares",
-    "Description": "Control Voice Royale — real-time speech translation — directly from your Elgato Stream Deck.",
-    "Category": "Voice Royale",
+    "Description": "Control One Voice Royale — real-time speech translation — directly from your Elgato Stream Deck.",
+    "Category": "One Voice Royale",
     "CategoryIcon": "icons/plugin",
     "Icon": "icons/plugin",
-    "URL": "https://github.com/JuhaFIN1/voice-royale",
+    "URL": "https://github.com/JuhaFIN1/one-voice-royale",
     "CodePath": "plugin.html",
     "PropertyInspectorPath": "propertyinspector/index.html",
     "SDKVersion": 2,
@@ -20,7 +20,7 @@
     "Actions": [
         {
             "Name": "Record Toggle",
-            "UUID": "com.voiceroyale.record.toggle",
+            "UUID": "com.onevoiceroyale.record.toggle",
             "Icon": "icons/plugin",
             "Tooltip": "Start or stop recording",
             "SupportedInMultiActions": true,
@@ -31,7 +31,7 @@
         },
         {
             "Name": "Wake Listen",
-            "UUID": "com.voiceroyale.wake.toggle",
+            "UUID": "com.onevoiceroyale.wake.toggle",
             "Icon": "icons/plugin",
             "Tooltip": "Toggle wake-word listening",
             "SupportedInMultiActions": true,
@@ -42,7 +42,7 @@
         },
         {
             "Name": "Speak Now",
-            "UUID": "com.voiceroyale.speak",
+            "UUID": "com.onevoiceroyale.speak",
             "Icon": "icons/plugin",
             "Tooltip": "Translate and speak the last transcript",
             "SupportedInMultiActions": true,
@@ -52,7 +52,7 @@
         },
         {
             "Name": "Stop Recording",
-            "UUID": "com.voiceroyale.stop",
+            "UUID": "com.onevoiceroyale.stop",
             "Icon": "icons/plugin",
             "Tooltip": "Stop recording immediately",
             "SupportedInMultiActions": true,
@@ -62,7 +62,7 @@
         },
         {
             "Name": "Switch Language",
-            "UUID": "com.voiceroyale.lang",
+            "UUID": "com.onevoiceroyale.lang",
             "Icon": "icons/plugin",
             "Tooltip": "Switch translation target language",
             "SupportedInMultiActions": true,
@@ -73,7 +73,7 @@
         },
         {
             "Name": "Play Soundboard",
-            "UUID": "com.voiceroyale.soundboard",
+            "UUID": "com.onevoiceroyale.soundboard",
             "Icon": "icons/plugin",
             "Tooltip": "Play a soundboard sound",
             "SupportedInMultiActions": true,
@@ -84,7 +84,7 @@
         },
         {
             "Name": "Go to Soundboard Page",
-            "UUID": "com.voiceroyale.sb.page.goto",
+            "UUID": "com.onevoiceroyale.sb.page.goto",
             "Icon": "icons/plugin",
             "Tooltip": "Jump to a specific soundboard page or folder",
             "SupportedInMultiActions": false,
@@ -96,7 +96,7 @@
         },
         {
             "Name": "Voice FX Preset",
-            "UUID": "com.voiceroyale.fx",
+            "UUID": "com.onevoiceroyale.fx",
             "Icon": "icons/plugin",
             "Tooltip": "Apply a Voice FX preset",
             "SupportedInMultiActions": true,
@@ -107,7 +107,7 @@
         },
         {
             "Name": "TTS Toggle",
-            "UUID": "com.voiceroyale.tts.toggle",
+            "UUID": "com.onevoiceroyale.tts.toggle",
             "Icon": "icons/plugin",
             "Tooltip": "Cycle between TTS backends",
             "SupportedInMultiActions": true,
@@ -117,9 +117,9 @@
         },
         {
             "Name": "Open Settings",
-            "UUID": "com.voiceroyale.settings",
+            "UUID": "com.onevoiceroyale.settings",
             "Icon": "icons/plugin",
-            "Tooltip": "Open Voice Royale settings dialog",
+            "Tooltip": "Open One Voice Royale settings dialog",
             "SupportedInMultiActions": false,
             "States": [
                 { "Image": "icons/plugin", "Title": "Settings" }

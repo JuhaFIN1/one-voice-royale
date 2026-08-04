@@ -1,11 +1,11 @@
 @echo off
 REM ============================================================
-REM  Build com.voiceroyale.streamDeckPlugin
+REM  Build com.onevoiceroyale.streamDeckPlugin
 REM  Double-click the output file to install in Stream Deck.
 REM ============================================================
 
-set PLUGIN_DIR=com.voiceroyale.sdPlugin
-set OUTPUT=com.voiceroyale.streamDeckPlugin
+set PLUGIN_DIR=com.onevoiceroyale.sdPlugin
+set OUTPUT=com.onevoiceroyale.streamDeckPlugin
 
 if exist "%OUTPUT%" del "%OUTPUT%"
 

@@ -1,13 +1,13 @@
 #!/bin/bash
-# Voice Royale - Fedora Linux build script
+# One Voice Royale - Fedora Linux build script
 # Ajetaan Fedora Linuxilla (testattu Fedora Linux 44, myos WSL2:ssa).
-# Tuottaa: dist/voice-royale/ (PyInstaller onedir) + RPM ~/rpmbuild/RPMS/x86_64/
+# Tuottaa: dist/one-voice-royale/ (PyInstaller onedir) + RPM ~/rpmbuild/RPMS/x86_64/
 set -e
 
-NAME=voice-royale
+NAME=one-voice-royale
 SCRIPT=ai_voice_app.py
 VERSION=$(grep -oP 'APP_VERSION = "\K[^"]+' ai_voice_app.py)
-echo "Building Voice Royale $VERSION for Fedora Linux..."
+echo "Building One Voice Royale $VERSION for Fedora Linux..."
 
 # --- 1. Jarjestelmariippuvuudet (kertaalleen, dnf) ---
 # sudo dnf install -y python3.12 python3.12-devel ffmpeg-free rpm-build gcc git \
@@ -48,12 +48,12 @@ python -m PyInstaller \
 # --- 4. RPM-paketointi ---
 mkdir -p ~/rpmbuild/{SOURCES,SPECS,BUILD,RPMS,SRPMS,BUILDROOT}
 tar czf ~/rpmbuild/SOURCES/${NAME}-${VERSION}-linux-x86_64.tar.gz -C dist "$NAME"
-cp packaging/voice-royale.desktop ~/rpmbuild/SOURCES/
+cp packaging/one-voice-royale.desktop ~/rpmbuild/SOURCES/
 cp iconimage.png ~/rpmbuild/SOURCES/
-sed "s/^Version:.*/Version:        ${VERSION}/" packaging/voice-royale.spec > ~/rpmbuild/SPECS/voice-royale.spec
-rpmbuild -ba ~/rpmbuild/SPECS/voice-royale.spec
+sed "s/^Version:.*/Version:        ${VERSION}/" packaging/one-voice-royale.spec > ~/rpmbuild/SPECS/one-voice-royale.spec
+rpmbuild -ba ~/rpmbuild/SPECS/one-voice-royale.spec
 
 echo ""
 echo "Valmis. RPM: ~/rpmbuild/RPMS/x86_64/${NAME}-${VERSION}-1.fc*.x86_64.rpm"
 echo "Asennus: sudo dnf install ~/rpmbuild/RPMS/x86_64/${NAME}-${VERSION}-1.fc*.x86_64.rpm"
-echo "Ajo: voice-royale  (tai Sovellukset-valikosta 'Voice Royale')"
+echo "Ajo: one-voice-royale  (tai Sovellukset-valikosta 'One Voice Royale')"

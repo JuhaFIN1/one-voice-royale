@@ -35,7 +35,7 @@
   const langEl = document.getElementById('lang');
   function sendSettings() {
     const settings = { lang: langEl.value };
-    const json = JSON.stringify({ event: 'sendToPlugin', action: 'com.voiceroyale.lang', payload: { settings } });
+    const json = JSON.stringify({ event: 'sendToPlugin', action: 'com.onevoiceroyale.lang', payload: { settings } });
     window.opener && window.opener.postMessage(json, '*');
   }
   langEl.addEventListener('change', sendSettings);

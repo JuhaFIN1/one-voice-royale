@@ -211,11 +211,21 @@ LIST_STYLE = T("""
 # =========================
 def get_base_path():
     if getattr(sys, "frozen", False):
-        # Store user data in %APPDATA%\Voice Royale — writable without admin rights,
+        # Store user data in %APPDATA%\One Voice Royale — writable without admin rights,
         # survives reinstalls/upgrades since the installer never touches AppData.
         appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
-        user_dir = os.path.join(appdata, "Voice Royale")
-        os.makedirs(user_dir, exist_ok=True)
+        user_dir = os.path.join(appdata, "One Voice Royale")
+        if not os.path.isdir(user_dir):
+            # One-time migration: app was renamed from "Voice Royale" — carry over
+            # settings/history from the old AppData folder so upgraders don't lose them.
+            old_dir = os.path.join(appdata, "Voice Royale")
+            if os.path.isdir(old_dir):
+                try:
+                    shutil.copytree(old_dir, user_dir)
+                except Exception:
+                    os.makedirs(user_dir, exist_ok=True)
+            else:
+                os.makedirs(user_dir, exist_ok=True)
         return user_dir
     return os.path.dirname(os.path.abspath(__file__))
 
@@ -332,8 +342,8 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.91"
-GITHUB_REPO = "JuhaFIN1/voice-royale"
+APP_VERSION = "1.3.92"
+GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
 # APP SETTINGS (separate from credentials/history)
@@ -393,7 +403,8 @@ def save_settings(settings: dict) -> None:
 
 
 _REG_RUN = r"Software\Microsoft\Windows\CurrentVersion\Run"
-_REG_APP_NAME = "Voice Royale"
+_REG_APP_NAME = "One Voice Royale"
+_REG_APP_NAME_OLD = "Voice Royale"  # pre-rename autostart key, migrated away from on read
 
 
 def _get_autostart_state() -> tuple:
@@ -403,9 +414,22 @@ def _get_autostart_state() -> tuple:
     try:
         import winreg
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _REG_RUN, 0, winreg.KEY_READ)
-        val, _ = winreg.QueryValueEx(key, _REG_APP_NAME)
+        try:
+            val, _ = winreg.QueryValueEx(key, _REG_APP_NAME)
+            winreg.CloseKey(key)
+            return True, "--minimized" in val
+        except FileNotFoundError:
+            pass
+        # Migrate a pre-rename autostart entry to the new key name.
+        try:
+            old_val, _ = winreg.QueryValueEx(key, _REG_APP_NAME_OLD)
+        except FileNotFoundError:
+            winreg.CloseKey(key)
+            return False, False
         winreg.CloseKey(key)
-        return True, "--minimized" in val
+        minimized = "--minimized" in old_val
+        _apply_autostart(True, minimized)
+        return True, minimized
     except Exception:
         return False, False
 
@@ -428,6 +452,10 @@ def _apply_autostart(enabled: bool, minimized: bool) -> None:
                 winreg.DeleteValue(key, _REG_APP_NAME)
             except FileNotFoundError:
                 pass
+        try:
+            winreg.DeleteValue(key, _REG_APP_NAME_OLD)
+        except FileNotFoundError:
+            pass
         winreg.CloseKey(key)
     except Exception as e:
         print(f"[autostart] registry error: {e}")
@@ -838,11 +866,11 @@ def _disable_unused_voicemeeter_endpoints(status_cb) -> None:
     """Hide all Voicemeeter virtual audio endpoints except Input and Out B1 from
     Windows' device lists (Sound settings, volume mixer, every app's device picker).
 
-    Voice Royale's chat routing only ever uses "Voicemeeter Input" (TTS/soundboard
+    One Voice Royale's chat routing only ever uses "Voicemeeter Input" (TTS/soundboard
     playback target) and "Voicemeeter Out B1" (virtual mic for Discord/games).
     Some Voicemeeter installations register far more endpoints (In1-5, AUX/VAIO3
     Input, Out A1-A5, Out B2-B3 — up to 14 unused ones observed on real hardware)
-    which clutters every device list in Windows, not just Voice Royale's own.
+    which clutters every device list in Windows, not just One Voice Royale's own.
 
     IMPORTANT — history of two failed approaches before this one, verified on real
     hardware, kept here so nobody re-attempts them:
@@ -946,7 +974,7 @@ def _check_voicemeeter_routing() -> tuple[str, bool]:
         if vm_out_dev and vm_in_dev:
             return (
                 "✅ Reititys valmis!\n"
-                f"  • Voice Royale lähtölaite → '{vm_in_dev['name']}'\n"
+                f"  • One Voice Royale lähtölaite → '{vm_in_dev['name']}'\n"
                 f"  • Windows oletusmikrofoni → '{vm_out_dev['name']}'\n"
                 "  • Discord, Fortnite ym. käyttävät sitä automaattisesti.",
                 True,
@@ -1103,7 +1131,7 @@ def _voicemeeter_configure(mic_device_name: str, status_cb) -> None:
         set_param_float("Strip[0].B1", 1.0)   # → B1 bus
         set_param_float("Strip[0].B2", 0.0)
 
-        # Virtual Input ("Voicemeeter Input" VAIO) → B1 — Voice Royale lähettää
+        # Virtual Input ("Voicemeeter Input" VAIO) → B1 — One Voice Royale lähettää
         # TTS/soundboard-äänen tänne. HUOM: standardi Banana-asennuksella (2 fyysistä
         # + 1 virtuaalinen tulo) virtuaalitulo on Strip[2], mutta joillain asennuksilla
         # (havaittu käyttäjän oikealla koneella: 3 fyysistä + 2 virtuaalista tuloa,
@@ -1447,12 +1475,12 @@ class VoiceEffectProcessor:
 class StreamDeckHttpServer:
     """HTTP server for the official Elgato Stream Deck plugin.
 
-    Voice Royale listens on localhost:17842.  The companion .streamDeckPlugin
+    One Voice Royale listens on localhost:17842.  The companion .streamDeckPlugin
     (in streamdeck-plugin/) connects to Stream Deck software via WebSocket and
     forwards button-press events here as HTTP POST /action/{name} requests.
 
     Endpoints:
-      GET  /health         → {"status":"ok","app":"Voice Royale"}
+      GET  /health         → {"status":"ok","app":"One Voice Royale"}
       GET  /state          → current app state (recording, lang, FX, soundboard…)
       GET  /actions        → list of callable action names
       POST /action/{name}  → trigger named action, returns {"ok":true}
@@ -1512,7 +1540,7 @@ class StreamDeckHttpServer:
 
             def do_GET(self):
                 if self.path == "/health":
-                    self._json({"status": "ok", "app": "Voice Royale",
+                    self._json({"status": "ok", "app": "One Voice Royale",
                                 "port": StreamDeckHttpServer.PORT})
                 elif self.path == "/state":
                     self._json(app._get_sd_state())
@@ -4350,7 +4378,7 @@ class TitleBar(QWidget):
 
         # Keski: neon-logo
         logo = QLabel(
-            '<span style="color:{b};">VOICE</span>'
+            '<span style="color:{b};">ONE VOICE</span>'
             '&nbsp;<span style="color:{p};">ROYALE</span>'.format(
                 b=THEME["BLUE_BRIGHT"], p=THEME["PURPLE_BRIGHT"])
         )
@@ -4595,7 +4623,7 @@ class App(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Voice Royale")
+        self.setWindowTitle("One Voice Royale")
         self.setWindowFlags(
             Qt.WindowType.Window
             | Qt.WindowType.FramelessWindowHint
@@ -4804,9 +4832,9 @@ class App(QWidget):
         self._tray_icon = QSystemTrayIcon(self)
         _icon_path = os.path.join(ASSETS_PATH, "iconimage.ico")
         self._tray_icon.setIcon(QIcon(_icon_path) if os.path.exists(_icon_path) else QIcon())
-        self._tray_icon.setToolTip("Voice Royale")
+        self._tray_icon.setToolTip("One Voice Royale")
         _tray_menu = QMenu()
-        _show_action = _tray_menu.addAction("Avaa Voice Royale")
+        _show_action = _tray_menu.addAction("Avaa One Voice Royale")
         _show_action.triggered.connect(self._restore_from_tray)
         _tray_menu.addSeparator()
         _quit_action = _tray_menu.addAction("Sulje ohjelma")
@@ -4842,7 +4870,7 @@ class App(QWidget):
         ))
         file_menu.addAction("⚙  Settings", lambda: open_settings_dialog(self))
         file_menu.addSeparator()
-        file_menu.addAction("ℹ  About Voice Royale", self._show_app_info)
+        file_menu.addAction("ℹ  About One Voice Royale", self._show_app_info)
         file_menu.addSeparator()
         file_menu.addAction("✕  Exit", QApplication.instance().quit)
         self._titlebar = TitleBar(self, file_menu)
@@ -5319,9 +5347,12 @@ class App(QWidget):
         def _on_sb_vol(v):
             self._sb_vol_label.setText(f"{v}%")
             self.settings["soundboard_volume"] = v / 100.0
+
+        def _on_sb_vol_released():
             save_settings(self.settings)
 
         self._sb_vol_slider.valueChanged.connect(_on_sb_vol)
+        self._sb_vol_slider.sliderReleased.connect(_on_sb_vol_released)
         _corner_lay.addWidget(self._sb_vol_slider)
         _corner_lay.addWidget(self._sb_vol_label)
 
@@ -7155,7 +7186,7 @@ class App(QWidget):
         ))
         menu.addAction("⚙  Settings", lambda: open_settings_dialog(self))
         menu.addSeparator()
-        menu.addAction("ℹ  About Voice Royale", self._show_app_info)
+        menu.addAction("ℹ  About One Voice Royale", self._show_app_info)
         menu.addAction("✕  Exit", QApplication.instance().quit)
         btn = self._hamburger_btn
         menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
@@ -7163,8 +7194,8 @@ class App(QWidget):
     def _show_app_info(self):
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.information(
-            self, "Voice Royale",
-            "Voice Royale — AI Voice Translation\n"
+            self, "One Voice Royale",
+            "One Voice Royale — AI Voice Translation\n"
             "© 2026 BluexDEV Softwares. All rights reserved.\n\n"
             "Speech-to-text: OpenAI Whisper\n"
             "Translation: GPT-4.1-mini\n"
@@ -7873,7 +7904,7 @@ def open_settings_dialog(parent_app: "App") -> None:
     )
 
     dlg = QDialog(parent_app)
-    dlg.setWindowTitle("Voice Royale — Asetukset")
+    dlg.setWindowTitle("One Voice Royale — Asetukset")
     dlg.resize(900, 660)
     dlg.setMinimumSize(720, 520)
     dlg.setStyleSheet(parent_app.styleSheet() + T("""
@@ -8393,7 +8424,7 @@ def open_settings_dialog(parent_app: "App") -> None:
         if mode is None:
             return
         cfg = _BACKUP_MODES[mode]
-        default_name = f"VoiceRoyale_backup_{mode}.zip"
+        default_name = f"OneVoiceRoyale_backup_{mode}.zip"
         path, _ = QFileDialog.getSaveFileName(dlg, "Vie data", default_name, "ZIP-arkisto (*.zip)")
         if not path:
             return
@@ -8522,7 +8553,7 @@ def open_settings_dialog(parent_app: "App") -> None:
     # How-it-works description
     sd_desc = QLabel(
         "<b>Miten se toimii:</b><br>"
-        "Voice Royale kuuntelee portissa <b>localhost:{port}</b>.<br>"
+        "One Voice Royale kuuntelee portissa <b>localhost:{port}</b>.<br>"
         "Elgato-plugin lähettää napin painallukset tänne HTTP-kutsuna ja hakee tilan päivitykset."
         .format(port=sd_port)
     )
@@ -8540,10 +8571,10 @@ def open_settings_dialog(parent_app: "App") -> None:
 
     sd_install_desc = QLabel(
         "1. Varmista, että Elgato Stream Deck -ohjelmisto on asennettu.<br>"
-        "2. Kaksoisnapsauta <b>com.voiceroyale.streamDeckPlugin</b> tiedostoa<br>"
+        "2. Kaksoisnapsauta <b>com.onevoiceroyale.streamDeckPlugin</b> tiedostoa<br>"
         "   (löytyy <b>streamdeck-plugin/</b> kansiosta).<br>"
         "3. Stream Deck -ohjelmisto asentaa pluginin automaattisesti.<br>"
-        "4. Vedä <b>Voice Royale</b> -toiminnot haluamillesi napeille.<br>"
+        "4. Vedä <b>One Voice Royale</b> -toiminnot haluamillesi napeille.<br>"
         "5. Plugin hakee tilan 2 sekunnin välein — napit päivittyvät automaattisesti."
     )
     sd_install_desc.setWordWrap(True)
@@ -8821,7 +8852,7 @@ def open_settings_dialog(parent_app: "App") -> None:
             try:
                 resp = requests.get(
                     f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
-                    headers={"User-Agent": "VoiceRoyale-Updater"},
+                    headers={"User-Agent": "OneVoiceRoyale-Updater"},
                     timeout=10
                 )
                 resp.raise_for_status()
@@ -8905,7 +8936,7 @@ def open_settings_dialog(parent_app: "App") -> None:
                 tmp_path = result[1]
                 if sys.platform == "win32":
                     # ShellExecuteW with "runas" forces a fresh UAC prompt even
-                    # if Voice Royale is already running elevated (e.g. from the
+                    # if One Voice Royale is already running elevated (e.g. from the
                     # previous Inno Setup install). subprocess.Popen would silently
                     # inherit admin rights and skip UAC.
                     import ctypes
@@ -8933,7 +8964,7 @@ def open_settings_dialog(parent_app: "App") -> None:
     f_maint.addRow("", _dl_btn)
     f_maint.addRow("", _desc(
         "Windows: Inno Setup -asentaja käynnistyy — vanha versio suljetaan automaattisesti.\n"
-        "macOS: DMG-tiedosto aukeaa — vedä Voice Royale.app Applications-kansioon."
+        "macOS: DMG-tiedosto aukeaa — vedä One Voice Royale.app Applications-kansioon."
     ))
 
     # ── Siivoa soundboard-tiedostot → Huolto ─────────────────────────────
@@ -9478,7 +9509,7 @@ class SetupWizard(QDialog):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Voice Royale — Asennus")
+        self.setWindowTitle("One Voice Royale — Asennus")
         self.setFixedSize(780, 900)
         self.setStyleSheet(self._STYLE)
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowCloseButtonHint)
@@ -9650,7 +9681,7 @@ class SetupWizard(QDialog):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         lay.addWidget(self._header(
-            "Tervetuloa Voice Royale",
+            "Tervetuloa One Voice Royale",
             "Asennusvelho — käy läpi kaikki vaiheet tai ohita jo valmiit kohdat."
         ))
         body = QWidget()
@@ -9783,7 +9814,7 @@ class SetupWizard(QDialog):
         if _mixer_found:
             mixer_cb.setChecked(True)
         _sw, sd_cb = _device_row("🎛️", "Minulla on Elgato Stream Deck",
-            "Voice Royalen napit Stream Deckiin — asetetaan viimeisellä sivulla.")
+            "One Voice Royalen napit Stream Deckiin — asetetaan viimeisellä sivulla.")
         _haw, ha_cb = _device_row("🏠", "Käytän Home Assistantia",
             "Kytke kotiautomaatio soundboard-nappeihin — asetetaan viimeisellä sivulla.")
 
@@ -10038,7 +10069,7 @@ class SetupWizard(QDialog):
                 self, "Käynnistä uudelleen",
                 "Ajurin viimeistely vaatii uudelleenkäynnistyksen.\n\n"
                 "Tietokone käynnistyy uudelleen 15 sekunnin kuluttua — tallenna avoimet "
-                "tiedostot muissa ohjelmissa.\n\nVoice Royale avaa tämän saman sivun "
+                "tiedostot muissa ohjelmissa.\n\nOne Voice Royale avaa tämän saman sivun "
                 "automaattisesti käynnistyksen jälkeen.",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
@@ -10712,7 +10743,7 @@ class SetupWizard(QDialog):
                 self, "Käynnistä uudelleen",
                 "Ajurin viimeistely vaatii uudelleenkäynnistyksen.\n\n"
                 "Tietokone käynnistyy uudelleen 15 sekunnin kuluttua — tallenna avoimet "
-                "tiedostot muissa ohjelmissa.\n\nVoice Royale avaa tämän saman sivun "
+                "tiedostot muissa ohjelmissa.\n\nOne Voice Royale avaa tämän saman sivun "
                 "automaattisesti käynnistyksen jälkeen.",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
@@ -10953,7 +10984,7 @@ class SetupWizard(QDialog):
                             ok = ok and test_ok
                             # Piilota turhat Voicemeeter-virtuaalilaitteet (In1-5, AUX/VAIO3
                             # Input, Out A1-A5, Out B2-B3 ym.) Windowsin laitelistoista —
-                            # Voice Royale käyttää vain "Voicemeeter Input" + "Voicemeeter
+                            # One Voice Royale käyttää vain "Voicemeeter Input" + "Voicemeeter
                             # Out B1", loput ovat pelkkää sekaannusta aiheuttavaa jäännettä.
                             # Aiemmin piilotettu "Lisäasetukset"-linkin taakse, nyt osa
                             # automaattista määritystä niin ettei käyttäjän tarvitse löytää
@@ -10968,7 +10999,7 @@ class SetupWizard(QDialog):
                         ok = _is_vbcable_installed()
                         if ok:
                             _cb(
-                                "✅ VB-Cable asennettu. Voice Royalen ääni ohjataan kaapeliin "
+                                "✅ VB-Cable asennettu. One Voice Royalen ääni ohjataan kaapeliin "
                                 "automaattisesti — valitse Discordissa/pelissä mikrofoniksi "
                                 "'CABLE Output'."
                             )
@@ -11085,7 +11116,7 @@ class SetupWizard(QDialog):
                 _dev_line
                 + "Mitä \"Määritä automaattisesti\" tekee tällä koneella (Voicemeeter Banana\n"
                 "asennettiin jo edellisellä sivulla — tässä tehdään vain määritykset):\n"
-                "  1.  Asettaa Voicemeeterin reitityksen: mikserisi Chat-mikki ja Voice Royalen\n"
+                "  1.  Asettaa Voicemeeterin reitityksen: mikserisi Chat-mikki ja One Voice Royalen\n"
                 "       käännösääni yhdistetään samaan B1-virtuaalikanavaan.\n"
                 "  2.  Vaihtaa Windowsin OLETUSMIKROFONIKSI \"Voicemeeter Out B1\"\n"
                 "       (Ääniasetukset → Tallennus) — Discord ja pelit alkavat käyttää sitä\n"
@@ -11098,7 +11129,7 @@ class SetupWizard(QDialog):
                 "Mitä \"Määritä automaattisesti\" tekee tällä koneella (VB-Cable asennettiin\n"
                 "jo edellisellä sivulla — tässä tehdään vain määritykset):\n"
                 "  1.  Varmistaa että VB-Cable-virtuaalikaapeli toimii.\n"
-                "  2.  Voice Royalen käännösääni ohjataan kaapeliin automaattisesti — valitse\n"
+                "  2.  One Voice Royalen käännösääni ohjataan kaapeliin automaattisesti — valitse\n"
                 "       Discordissa/pelissä mikrofoniksi \"CABLE Output\", niin muut kuulevat\n"
                 "       käännöksesi.\n"
                 "  3.  Windowsin oletuslaitteisiin EI kosketa."
@@ -11516,7 +11547,7 @@ class SetupWizard(QDialog):
                     try:
                         import asyncio
                         wav = asyncio.run(
-                            request_edge_tts_wav("Voice Royale on valmis. Testi onnistui.", "Finnish")
+                            request_edge_tts_wav("One Voice Royale on valmis. Testi onnistui.", "Finnish")
                         )
                         play_wav_bytes(wav, device_indices=selected_out if selected_out else None)
                         results.append("✅ TTS toimii")
@@ -11632,8 +11663,8 @@ class SetupWizard(QDialog):
         _sd_steps = QLabel(
             "1.  Varmista että Elgato Stream Deck -ohjelmisto on asennettu.\n"
             "2.  Paina alla olevaa nappia — plugin asentuu itsestään.\n"
-            "3.  Vedä Voice Royale -toiminnot haluamillesi napeille.\n"
-            "Napit päivittyvät automaattisesti kun Voice Royale on käynnissä."
+            "3.  Vedä One Voice Royale -toiminnot haluamillesi napeille.\n"
+            "Napit päivittyvät automaattisesti kun One Voice Royale on käynnissä."
         )
         _sd_steps.setStyleSheet(
             "color: #8a9bc4; font-size: 11px; background: transparent; border: none; line-height: 150%;"
@@ -11650,10 +11681,10 @@ class SetupWizard(QDialog):
             if getattr(sys, "frozen", False):
                 cands.append(os.path.join(
                     os.path.dirname(sys.executable), "StreamDeck",
-                    "com.voiceroyale.streamDeckPlugin"))
+                    "com.onevoiceroyale.streamDeckPlugin"))
             cands.append(os.path.join(
                 os.path.dirname(os.path.abspath(__file__)), "streamdeck-plugin",
-                "com.voiceroyale.streamDeckPlugin"))
+                "com.onevoiceroyale.streamDeckPlugin"))
             for _p in cands:
                 if os.path.exists(_p):
                     try:
@@ -11807,7 +11838,7 @@ class SetupWizard(QDialog):
         if sd_on:
             _port = StreamDeckHttpServer.PORT
             self._fin_sd_status.setText(
-                f"Voice Royale kuuntelee Stream Deck -pluginia portissa localhost:{_port} "
+                f"One Voice Royale kuuntelee Stream Deck -pluginia portissa localhost:{_port} "
                 "aina kun appi on käynnissä."
             )
 

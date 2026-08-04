@@ -1,13 +1,13 @@
-# Voice Royale — Copilot Instructions
+# One Voice Royale — Copilot Instructions
 
 ## Project overview
 
 Windows + macOS desktop app (PyQt6): microphone → Whisper transcription → translation (Google/DeepL/OpenAI) → TTS playback.
 All logic in one file: `ai_voice_app.py` (~8400 lines).
 
-Working directory: `E:\CLOUDS\AI-SYSTEMS\ai-voice-router\`
-GitHub: https://github.com/JuhaFIN1/voice-royale
-Current version: `APP_VERSION = "1.3.44"` (constant near top of file; CI auto-patches from git tag)
+Working directory: `D:\BluexDEV\one-voice-royale\`
+GitHub: https://github.com/JuhaFIN1/one-voice-royale
+Current version: `APP_VERSION = "1.3.92"` (constant near top of file; CI auto-patches from git tag)
 
 ---
 
@@ -52,7 +52,7 @@ Current version: `APP_VERSION = "1.3.44"` (constant near top of file; CI auto-pa
 ```
 RodeCaster Chat mic → Voicemeeter Hardware Input 1 (Strip[0]) → B1 bus ─┐
                                                                           ├→ Voicemeeter Out B1 → Windows default mic → all apps
-Voice Royale TTS/Soundboard → Voicemeeter Input (Strip[2]) → B1 bus ────┘
+One Voice Royale TTS/Soundboard → Voicemeeter Input (Strip[2]) → B1 bus ────┘
 ```
 
 - `_ensure_voicemeeter_running()` — starts Voicemeeter Banana if not running (SW_SHOWMINIMIZED); tries exe names `["voicemeeterb.exe", "voicemeeterpro_x64.exe", "voicemeeterpro.exe"]` (new VB-Audio installer = `voicemeeterpro_x64.exe`); searches standard paths + WOW6432Node registry `UninstallString`/`DisplayIcon`; called from App.__init__ (1.2s delay, bg thread, unconditional) and before wizard configure. All subprocess calls use `CREATE_NO_WINDOW`.
@@ -64,7 +64,7 @@ Voice Royale TTS/Soundboard → Voicemeeter Input (Strip[2]) → B1 bus ──�
 - `_set_windows_default_recording(name_contains)` — PowerShell: reads registry `{a45c254e...},2` for device name, uses `PolicyConfigHelperVR` C# class to call IPolicyConfig.SetDefaultEndpoint
 - `_get_voicemeeter_output_device_indices()` — finds "Voicemeeter Input (VB-Audio Voicemeeter VAIO)" (Strip[2] playback device) + headphones; saves to HISTORY_FILE
 
-**Critical:** Voice Royale must output TTS to `"Voicemeeter Input (VB-Audio Voicemeeter VAIO)"` (exact name, Strip[2]). NOT "Voicemeeter In 2" or other strips. Selected output devices saved to `speech_history.json → selected_output_devices`.
+**Critical:** One Voice Royale must output TTS to `"Voicemeeter Input (VB-Audio Voicemeeter VAIO)"` (exact name, Strip[2]). NOT "Voicemeeter In 2" or other strips. Selected output devices saved to `speech_history.json → selected_output_devices`.
 
 ---
 
@@ -141,7 +141,7 @@ Update all **five** places: `LANGS`, `LANG_FLAG_CODES`, `EDGE_VOICES`, `_GOOGLE_
 - **-9999**: WDM-KS blocking — `_best_audio_devices` skips WDM-KS if alternatives exist
 
 ### exe/frozen mode
-- `BASE_PATH = %APPDATA%\Voice Royale\` when frozen
+- `BASE_PATH = %APPDATA%\One Voice Royale\` when frozen (migrates from `%APPDATA%\Voice Royale\` on first launch after upgrade)
 - `_pkg_status()`: use `sys.modules` for pvporcupine/pyrubberband (not importlib — can crash frozen)
 - Auto-updater uses `ShellExecuteW("runas", ...)` to force UAC prompt
 

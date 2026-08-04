@@ -40,7 +40,7 @@ jobs:
           python -m PyInstaller `
             --noconsole `
             --onedir `
-            --name "Voice Royale" `
+            --name "One Voice Royale" `
             --icon "iconimage.ico" `
             --add-data "BluexDEV_logo.png;." `
             --add-data "iconimage.ico;." `
@@ -60,9 +60,9 @@ jobs:
 
       - name: Build Stream Deck plugin package
         run: |
-          Compress-Archive -Path 'streamdeck-plugin\com.voiceroyale.sdPlugin' `
+          Compress-Archive -Path 'streamdeck-plugin\com.onevoiceroyale.sdPlugin' `
             -DestinationPath 'streamdeck-plugin\_tmp.zip' -Force
-          Rename-Item 'streamdeck-plugin\_tmp.zip' 'com.voiceroyale.streamDeckPlugin'
+          Rename-Item 'streamdeck-plugin\_tmp.zip' 'com.onevoiceroyale.streamDeckPlugin'
         shell: pwsh
 
       - name: Install Inno Setup
@@ -74,7 +74,7 @@ jobs:
           $v = "${{ steps.ver.outputs.VERSION }}"
           (Get-Content installer.iss) `
             -replace 'AppVersion=.*', "AppVersion=$v" `
-            -replace 'OutputBaseFilename=.*', "OutputBaseFilename=Voice_Royale_Setup_$v" |
+            -replace 'OutputBaseFilename=.*', "OutputBaseFilename=One_Voice_Royale_Setup_$v" |
             Set-Content installer.iss
           (Get-Content ai_voice_app.py) `
             -replace 'APP_VERSION = ".*"', "APP_VERSION = `"$v`"" |
@@ -96,7 +96,7 @@ jobs:
           if (-not $env:SIGN_CERT_BASE64) { Write-Host "No signing cert secret — skipping"; exit 0 }
           $bytes = [Convert]::FromBase64String($env:SIGN_CERT_BASE64)
           [IO.File]::WriteAllBytes("signing.pfx", $bytes)
-          signtool sign /f signing.pfx /p $env:SIGN_CERT_PASSWORD /td sha256 /fd sha256 "installer_output\Voice_Royale_Setup_${{ steps.ver.outputs.VERSION }}.exe"
+          signtool sign /f signing.pfx /p $env:SIGN_CERT_PASSWORD /td sha256 /fd sha256 "installer_output\One_Voice_Royale_Setup_${{ steps.ver.outputs.VERSION }}.exe"
           Remove-Item signing.pfx
         shell: pwsh
 
@@ -104,8 +104,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            installer_output/Voice_Royale_Setup_${{ steps.ver.outputs.VERSION }}.exe
-            streamdeck-plugin/com.voiceroyale.streamDeckPlugin
+            installer_output/One_Voice_Royale_Setup_${{ steps.ver.outputs.VERSION }}.exe
+            streamdeck-plugin/com.onevoiceroyale.streamDeckPlugin
           generate_release_notes: true
 
   build-macos-arm64:
@@ -155,8 +155,8 @@ jobs:
           python -m PyInstaller \
             --windowed \
             --onedir \
-            --name "Voice Royale" \
-            --osx-bundle-identifier "com.voiceroyale.app" \
+            --name "One Voice Royale" \
+            --osx-bundle-identifier "com.onevoiceroyale.app" \
             --add-data "BluexDEV_logo.png:." \
             --add-data "iconimage.ico:." \
             --add-data "qt.conf:." \
@@ -179,9 +179,9 @@ jobs:
 
       - name: Add macOS Info.plist permissions
         run: |
-          PLIST="dist/Voice Royale.app/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'Voice Royale needs microphone access for voice recognition.'" "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Add :NSInputMonitoringUsageDescription string 'Voice Royale needs input monitoring for global hotkeys.'" "$PLIST" || true
+          PLIST="dist/One Voice Royale.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'One Voice Royale needs microphone access for voice recognition.'" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSInputMonitoringUsageDescription string 'One Voice Royale needs input monitoring for global hotkeys.'" "$PLIST" || true
           /usr/libexec/PlistBuddy -c "Add :NSPrincipalClass string 'NSApplication'" "$PLIST" || true
 
       - name: Create entitlements and sign app bundle
@@ -195,27 +195,27 @@ jobs:
             <key>com.apple.security.cs.disable-library-validation</key><true/>
           </dict></plist>
           ENTEOF
-          codesign --deep --force -s - --entitlements entitlements.plist "dist/Voice Royale.app" || true
+          codesign --deep --force -s - --entitlements entitlements.plist "dist/One Voice Royale.app" || true
 
       - name: Build Stream Deck plugin package
         run: |
           cd streamdeck-plugin
-          zip -r com.voiceroyale.streamDeckPlugin com.voiceroyale.sdPlugin
+          zip -r com.onevoiceroyale.streamDeckPlugin com.onevoiceroyale.sdPlugin
 
       - name: Create DMG
         run: |
           mkdir -p dmg_stage
-          cp -r "dist/Voice Royale.app" "dmg_stage/"
+          cp -r "dist/One Voice Royale.app" "dmg_stage/"
           ln -s /Applications "dmg_stage/Applications"
           mkdir -p "dmg_stage/Stream Deck Plugin"
-          cp "streamdeck-plugin/com.voiceroyale.streamDeckPlugin" "dmg_stage/Stream Deck Plugin/"
+          cp "streamdeck-plugin/com.onevoiceroyale.streamDeckPlugin" "dmg_stage/Stream Deck Plugin/"
           sleep 2
           for i in 1 2 3 4 5; do
             hdiutil create \
-              -volname "Voice Royale" \
+              -volname "One Voice Royale" \
               -srcfolder dmg_stage \
               -ov -format UDZO \
-              "Voice_Royale_${{ steps.ver.outputs.VERSION }}_macOS_arm64.dmg" && break
+              "One_Voice_Royale_${{ steps.ver.outputs.VERSION }}_macOS_arm64.dmg" && break
             echo "hdiutil create failed (attempt $i), retrying..."
             sleep 5
           done
@@ -223,7 +223,7 @@ jobs:
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          files: Voice_Royale_${{ steps.ver.outputs.VERSION }}_macOS_arm64.dmg
+          files: One_Voice_Royale_${{ steps.ver.outputs.VERSION }}_macOS_arm64.dmg
 
   build-macos-intel:
     # macos-15 (M2 runner) + arch -x86_64 = Intel x86_64 binary via Rosetta 2 cross-build
@@ -278,8 +278,8 @@ jobs:
           arch -x86_64 $X86_PY -m PyInstaller \
             --windowed \
             --onedir \
-            --name "Voice Royale" \
-            --osx-bundle-identifier "com.voiceroyale.app" \
+            --name "One Voice Royale" \
+            --osx-bundle-identifier "com.onevoiceroyale.app" \
             --add-data "BluexDEV_logo.png:." \
             --add-data "iconimage.ico:." \
             --add-data "qt.conf:." \
@@ -302,9 +302,9 @@ jobs:
 
       - name: Add macOS Info.plist permissions
         run: |
-          PLIST="dist/Voice Royale.app/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'Voice Royale needs microphone access for voice recognition.'" "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Add :NSInputMonitoringUsageDescription string 'Voice Royale needs input monitoring for global hotkeys.'" "$PLIST" || true
+          PLIST="dist/One Voice Royale.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'One Voice Royale needs microphone access for voice recognition.'" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSInputMonitoringUsageDescription string 'One Voice Royale needs input monitoring for global hotkeys.'" "$PLIST" || true
           /usr/libexec/PlistBuddy -c "Add :NSPrincipalClass string 'NSApplication'" "$PLIST" || true
 
       - name: Create entitlements and sign app bundle
@@ -318,20 +318,20 @@ jobs:
             <key>com.apple.security.cs.disable-library-validation</key><true/>
           </dict></plist>
           ENTEOF
-          codesign --deep --force -s - --entitlements entitlements.plist "dist/Voice Royale.app" || true
+          codesign --deep --force -s - --entitlements entitlements.plist "dist/One Voice Royale.app" || true
 
       - name: Create DMG
         run: |
           mkdir -p dmg_stage
-          cp -r "dist/Voice Royale.app" "dmg_stage/"
+          cp -r "dist/One Voice Royale.app" "dmg_stage/"
           ln -s /Applications "dmg_stage/Applications"
           sleep 2
           for i in 1 2 3 4 5; do
             hdiutil create \
-              -volname "Voice Royale" \
+              -volname "One Voice Royale" \
               -srcfolder dmg_stage \
               -ov -format UDZO \
-              "Voice_Royale_${{ steps.ver.outputs.VERSION }}_macOS_x86_64.dmg" && break
+              "One_Voice_Royale_${{ steps.ver.outputs.VERSION }}_macOS_x86_64.dmg" && break
             echo "hdiutil create failed (attempt $i), retrying..."
             sleep 5
           done
@@ -339,4 +339,4 @@ jobs:
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          files: Voice_Royale_${{ steps.ver.outputs.VERSION }}_macOS_x86_64.dmg
+          files: One_Voice_Royale_${{ steps.ver.outputs.VERSION }}_macOS_x86_64.dmg

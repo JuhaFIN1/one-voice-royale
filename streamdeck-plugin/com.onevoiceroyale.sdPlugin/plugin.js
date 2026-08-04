@@ -1,7 +1,7 @@
 /**
- * Voice Royale — Elgato Stream Deck Plugin
+ * One Voice Royale — Elgato Stream Deck Plugin
  *
- * Connects to Voice Royale's local HTTP server (port 17842) and proxies
+ * Connects to One Voice Royale's local HTTP server (port 17842) and proxies
  * button-press events as POST /action/{name} requests.  State is polled
  * every 2 seconds and button titles are updated to reflect the current
  * recording/listening/FX state.
@@ -33,20 +33,20 @@ const pluginUUID  = getArg('-pluginUUID')  || getArg('--pluginUUID');
 const registerEvent = getArg('-registerEvent') || getArg('--registerEvent');
 
 if (!sdPort || !pluginUUID || !registerEvent) {
-    console.error('[Voice Royale] Missing required CLI args: -port -pluginUUID -registerEvent');
+    console.error('[One Voice Royale] Missing required CLI args: -port -pluginUUID -registerEvent');
     process.exit(1);
 }
 
-// ── Action UUID → Voice Royale action name mapping ──────────────────────────
+// ── Action UUID → One Voice Royale action name mapping ──────────────────────────
 const ACTION_MAP = {
-    'com.voiceroyale.record.toggle': 'record_toggle',
-    'com.voiceroyale.wake.toggle':   'wake_listen_toggle',
-    'com.voiceroyale.speak':         'speak',
-    'com.voiceroyale.stop':          'stop_recording',
-    'com.voiceroyale.tts.toggle':    'tts_toggle',
-    'com.voiceroyale.settings':      'settings',
-    'com.voiceroyale.sb.page.next':  'sb_page_next',
-    'com.voiceroyale.sb.page.prev':  'sb_page_prev',
+    'com.onevoiceroyale.record.toggle': 'record_toggle',
+    'com.onevoiceroyale.wake.toggle':   'wake_listen_toggle',
+    'com.onevoiceroyale.speak':         'speak',
+    'com.onevoiceroyale.stop':          'stop_recording',
+    'com.onevoiceroyale.tts.toggle':    'tts_toggle',
+    'com.onevoiceroyale.settings':      'settings',
+    'com.onevoiceroyale.sb.page.next':  'sb_page_next',
+    'com.onevoiceroyale.sb.page.prev':  'sb_page_prev',
     // lang / soundboard / fx resolved from payload.settings at keyDown time
 };
 
@@ -65,7 +65,7 @@ function connect() {
     })();
 
     if (!WebSocket) {
-        console.error('[Voice Royale] WebSocket not available — install ws package or use Stream Deck 6.x');
+        console.error('[One Voice Royale] WebSocket not available — install ws package or use Stream Deck 6.x');
         return;
     }
 
@@ -73,7 +73,7 @@ function connect() {
 
     ws.addEventListener('open', () => {
         ws.send(JSON.stringify({ event: registerEvent, uuid: pluginUUID }));
-        console.log('[Voice Royale] Connected to Stream Deck software');
+        console.log('[One Voice Royale] Connected to Stream Deck software');
         startPolling();
     });
 
@@ -84,13 +84,13 @@ function connect() {
     });
 
     ws.addEventListener('close', () => {
-        console.log('[Voice Royale] Disconnected from Stream Deck — reconnecting in 5s');
+        console.log('[One Voice Royale] Disconnected from Stream Deck — reconnecting in 5s');
         stopPolling();
         setTimeout(connect, 5000);
     });
 
     ws.addEventListener('error', (err) => {
-        console.error('[Voice Royale] WebSocket error:', err.message || err);
+        console.error('[One Voice Royale] WebSocket error:', err.message || err);
     });
 }
 
@@ -124,7 +124,7 @@ function handleSDEvent(msg) {
 
         case 'applicationDidLaunch':
         case 'applicationDidTerminate':
-            // Voice Royale started/stopped — poll immediately
+            // One Voice Royale started/stopped — poll immediately
             pollState();
             break;
     }
@@ -137,16 +137,16 @@ function handleKeyDown(action, context, payload) {
     if (!vrAction) {
         // Actions with user-configurable settings (lang, soundboard, fx)
         const settings = payload.settings || {};
-        if (action === 'com.voiceroyale.lang') {
+        if (action === 'com.onevoiceroyale.lang') {
             vrAction = settings.lang ? `lang_${settings.lang}` : 'lang_English';
-        } else if (action === 'com.voiceroyale.soundboard') {
+        } else if (action === 'com.onevoiceroyale.soundboard') {
             const page = settings.page !== undefined ? settings.page : 0;
             const slot = settings.slot !== undefined ? settings.slot : 0;
             vrAction = `soundboard_${page}_${slot}`;
-        } else if (action === 'com.voiceroyale.fx') {
+        } else if (action === 'com.onevoiceroyale.fx') {
             vrAction = settings.preset ? `fx_${settings.preset}` : 'fx_Normal';
         } else {
-            console.warn('[Voice Royale] Unknown action:', action);
+            console.warn('[One Voice Royale] Unknown action:', action);
             return;
         }
     }
@@ -159,7 +159,7 @@ function handleKeyDown(action, context, payload) {
             setTimeout(pollState, 300);
         })
         .catch(() => {
-            // Voice Royale not running
+            // One Voice Royale not running
             sendSD({ event: 'showAlert', context });
         });
 }
@@ -182,7 +182,7 @@ async function pollState() {
             updateContext(entry.action, entry.context, entry.settings, state);
         }
     } catch (_) {
-        // Voice Royale not running — clear state indicators
+        // One Voice Royale not running — clear state indicators
         for (const [, entry] of activeContexts) {
             sendSD({ event: 'setState', context: entry.context, payload: { state: 0 } });
         }
@@ -195,28 +195,28 @@ function updateContext(action, context, settings, state) {
     let title = '';
 
     switch (action) {
-        case 'com.voiceroyale.record.toggle':
+        case 'com.onevoiceroyale.record.toggle':
             isActive = !!state.recording;
             title = state.recording ? 'REC...' : 'Record';
             break;
-        case 'com.voiceroyale.wake.toggle':
+        case 'com.onevoiceroyale.wake.toggle':
             isActive = !!state.listening;
             title = state.listening ? 'Listening' : 'Listen';
             break;
-        case 'com.voiceroyale.stop':
+        case 'com.onevoiceroyale.stop':
             isActive = !!state.recording;
             title = 'Stop';
             break;
-        case 'com.voiceroyale.tts.toggle':
+        case 'com.onevoiceroyale.tts.toggle':
             title = state.tts_backend ? state.tts_backend.substring(0, 8) : 'TTS';
             break;
-        case 'com.voiceroyale.lang': {
+        case 'com.onevoiceroyale.lang': {
             const lang = settings.lang || 'English';
             isActive = state.language === lang;
             title = lang.substring(0, 8);
             break;
         }
-        case 'com.voiceroyale.soundboard': {
+        case 'com.onevoiceroyale.soundboard': {
             const page = settings.page !== undefined ? settings.page : 0;
             const slot = settings.slot !== undefined ? settings.slot : 0;
             const pages = state.soundboard_pages || [];
@@ -224,19 +224,19 @@ function updateContext(action, context, settings, state) {
             title = slotData ? slotData.name.substring(0, 8) : `SB ${slot + 1}`;
             break;
         }
-        case 'com.voiceroyale.sb.page.next': {
+        case 'com.onevoiceroyale.sb.page.next': {
             const pages = state.soundboard_pages || [];
             const next = pages.length ? (state.soundboard_page + 1) % pages.length : 0;
             title = pages[next] ? pages[next].name.substring(0, 8) : '->';
             break;
         }
-        case 'com.voiceroyale.sb.page.prev': {
+        case 'com.onevoiceroyale.sb.page.prev': {
             const pages = state.soundboard_pages || [];
             const prev = pages.length ? (state.soundboard_page + pages.length - 1) % pages.length : 0;
             title = pages[prev] ? pages[prev].name.substring(0, 8) : '<-';
             break;
         }
-        case 'com.voiceroyale.fx': {
+        case 'com.onevoiceroyale.fx': {
             const preset = settings.preset || 'Normal';
             isActive = state.fx_active && state.fx_preset === preset;
             title = preset.substring(0, 8);
