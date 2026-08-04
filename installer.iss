@@ -1,7 +1,7 @@
 [Setup]
 AppId={{F3A7C2E1-9B4D-4F8A-BC23-1E5D7A9F0C42}
 AppName=One Voice Royale
-AppVersion=1.3.92
+AppVersion=1.3.93
 AppPublisher=BluexDEV Softwares
 AppPublisherURL=https://github.com/JuhaFIN1/one-voice-royale
 AppSupportURL=https://github.com/JuhaFIN1/one-voice-royale/issues
@@ -9,7 +9,7 @@ DefaultDirName={autopf}\One Voice Royale
 DefaultGroupName=One Voice Royale
 AllowNoIcons=yes
 OutputDir=installer_output
-OutputBaseFilename=One_Voice_Royale_Setup_1.3.92
+OutputBaseFilename=One_Voice_Royale_Setup_1.3.93
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -35,6 +35,8 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 Type: files; Name: "{app}\AI Voice Router.exe"
 ; Remove leftover exe from the pre-rename "Voice Royale" installs
 Type: files; Name: "{app}\Voice Royale.exe"
+; Remove leftover Stream Deck plugin package from the pre-rename "Voice Royale" installs
+Type: files; Name: "{app}\StreamDeck\com.voiceroyale.streamDeckPlugin"
 
 [Files]
 Source: "dist\One Voice Royale\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

@@ -218,10 +218,13 @@ def get_base_path():
         if not os.path.isdir(user_dir):
             # One-time migration: app was renamed from "Voice Royale" — carry over
             # settings/history from the old AppData folder so upgraders don't lose them.
+            # The old folder is removed only after a successful copy, so a failed/partial
+            # copy leaves the original data untouched for the next launch to retry.
             old_dir = os.path.join(appdata, "Voice Royale")
             if os.path.isdir(old_dir):
                 try:
                     shutil.copytree(old_dir, user_dir)
+                    shutil.rmtree(old_dir, ignore_errors=True)
                 except Exception:
                     os.makedirs(user_dir, exist_ok=True)
             else:
@@ -342,7 +345,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.92"
+APP_VERSION = "1.3.93"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================

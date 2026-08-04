@@ -87,6 +87,8 @@ The wizard sets **Windows default microphone = Voicemeeter Out B1** automaticall
 4. Grant microphone and accessibility permissions when prompted
 5. Global hotkeys require **Accessibility** permission: System Settings → Privacy & Security → Accessibility → enable One Voice Royale
 
+> **Upgrading from "Voice Royale"?** The app's bundle ID changed (`com.voiceroyale.app` → `com.onevoiceroyale.app`), so macOS treats this as a new app rather than an update — your settings/history carry over automatically, but you'll need to: delete the old **Voice Royale.app** from Applications manually (it won't be replaced automatically), re-grant microphone/accessibility permissions to the new app, and reinstall the Stream Deck plugin if you use one (old `com.voiceroyale.sdPlugin` won't be removed automatically either).
+
 ## Optional packages
 
 Install these for extra features (all optional):
