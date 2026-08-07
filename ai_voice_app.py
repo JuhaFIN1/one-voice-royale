@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.109"
+APP_VERSION = "1.3.110"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -394,7 +394,14 @@ DEFAULT_SETTINGS = {
 def load_settings() -> dict:
     try:
         if os.path.exists(SETTINGS_FILE):
-            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            # utf-8-sig transparently strips a UTF-8 BOM if present (e.g. a file that
+            # was ever touched by PowerShell's Set-Content -Encoding utf8, which adds
+            # one by default) and behaves identically to plain utf-8 otherwise. Plain
+            # "utf-8" raises JSONDecodeError on a BOM, which this function's bare
+            # except silently turned into "return full DEFAULT_SETTINGS" — a real
+            # incident: that silent fallback then got saved back over the user's real
+            # 440-slot soundboard, appearing to wipe it. Never let a BOM be the trigger.
+            with open(SETTINGS_FILE, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
             merged = {**DEFAULT_SETTINGS, **data}
             return merged
@@ -3547,7 +3554,9 @@ def find_voicemeeter_device(devices):
 def load_history_data():
     try:
         if os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            # utf-8-sig: see load_settings() — never let a stray BOM silently wipe
+            # favorites/history via a swallowed JSONDecodeError.
+            with open(HISTORY_FILE, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
 
             # Migrate old display_lang values to plain language names
@@ -9490,7 +9499,7 @@ def open_settings_dialog(parent_app: "App") -> None:
                             arc_settings = json.load(f)
                         cur_settings = {}
                         if os.path.exists(SETTINGS_FILE):
-                            with open(SETTINGS_FILE, encoding="utf-8") as f:
+                            with open(SETTINGS_FILE, encoding="utf-8-sig") as f:
                                 cur_settings = json.load(f)
                         cur_settings["soundboard_pages"] = arc_settings.get("soundboard_pages", [])
                         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
@@ -9692,7 +9701,7 @@ def open_settings_dialog(parent_app: "App") -> None:
             parent_app.append_status("OpenAI API key updated via wizard.")
         # Reload device selections from history
         try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as _hf:
+            with open(HISTORY_FILE, "r", encoding="utf-8-sig") as _hf:
                 parent_app.history_data = json.load(_hf)
         except Exception:
             pass
@@ -13330,7 +13339,7 @@ class SetupWizard(QDialog):
         try:
             hd = {}
             if os.path.exists(HISTORY_FILE):
-                with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                with open(HISTORY_FILE, "r", encoding="utf-8-sig") as f:
                     hd = json.load(f)
             # Preserve virtual devices from previous Voicemeeter wizard config
             _prev = hd.get("selected_output_devices") or []
