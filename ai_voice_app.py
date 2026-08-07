@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.103"
+APP_VERSION = "1.3.104"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -1631,7 +1631,7 @@ class StreamDeckHttpServer:
                     # Serve the most recently prepared audio (TTS/favorite/soundboard) for
                     # Sonos play_uri() — always MP3: WAV served to Sonos is unreliable in
                     # practice (community-confirmed — gets stuck in TRANSITIONING and never
-                    # even fetches the URL), MP3 works reliably. See _to_sonos_mp3().
+                    # even fetches the URL), MP3 works reliably. See _to_mp3().
                     body = getattr(app, "_sonos_audio_cache", None)
                     if body:
                         self.send_response(200)
@@ -1859,13 +1859,15 @@ def _get_local_ip() -> str:
         return "127.0.0.1"
 
 
-def _to_sonos_mp3(data: bytes) -> bytes:
+def _to_mp3(data: bytes) -> bytes:
     """Transcode arbitrary audio bytes (WAV, MP3, OGG, FLAC — ffmpeg auto-detects the
-    input) to MP3 for Sonos playback. Confirmed against a real speaker: WAV served
-    directly to Sonos via play_uri() is unreliable — it gets stuck in TRANSITIONING
-    and never even issues an HTTP request for the URL, a known SoCo/Sonos community
-    issue — while MP3 plays reliably. Raises RuntimeError on failure (caller decides
-    how to surface that instead of silently producing empty/garbage audio)."""
+    input) to MP3. Used both for Sonos playback (confirmed against a real speaker: WAV
+    served directly to Sonos via play_uri() is unreliable — it gets stuck in
+    TRANSITIONING and never even issues an HTTP request for the URL, a known
+    SoCo/Sonos community issue — while MP3 plays reliably) and as the app's general
+    soundboard/favorites storage format (smaller files, one format everywhere).
+    Raises RuntimeError on failure (caller decides how to surface that instead of
+    silently producing empty/garbage audio)."""
     with tempfile.NamedTemporaryFile(suffix=".src", delete=False) as src_tmp:
         src_path = src_tmp.name
         src_tmp.write(data)
@@ -1878,7 +1880,7 @@ def _to_sonos_mp3(data: bytes) -> bytes:
             creationflags=(subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0),
         )
         if result.returncode != 0:
-            raise RuntimeError(f"ffmpeg failed to transcode audio for Sonos: {result.stderr.strip()}")
+            raise RuntimeError(f"ffmpeg failed to transcode audio: {result.stderr.strip()}")
         with open(dst_path, "rb") as f:
             return f.read()
     finally:
@@ -1945,10 +1947,12 @@ def _ha_serve_test_beep() -> bytes:
 # =========================
 
 def _sb_import_audio(src_path: str, page_index: int, slot_index: int) -> tuple[str, int, int]:
-    """Convert and copy audio into soundboard data dir. Returns (dest_path, orig_bytes, new_bytes)."""
+    """Convert and copy audio into soundboard data dir as MP3 (smaller than WAV, and the
+    app's one storage format everywhere — see _to_mp3). Returns (dest_path, orig_bytes,
+    new_bytes)."""
     out_dir = os.path.join(BASE_PATH, "soundboard", "audio")
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"{uuid.uuid4().hex}.wav")
+    out_path = os.path.join(out_dir, f"{uuid.uuid4().hex}.mp3")
     orig_size = os.path.getsize(src_path)
 
     ext = os.path.splitext(src_path)[1].lower()
@@ -1999,13 +2003,98 @@ def _sb_import_audio(src_path: str, page_index: int, slot_index: int) -> tuple[s
                 pass
 
     out_int16 = (np.clip(data, -1.0, 1.0) * 32767).astype(np.int16)
-    with wave.open(out_path, "wb") as wf:
+    wav_buf = io.BytesIO()
+    with wave.open(wav_buf, "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(target_sr)
         wf.writeframes(out_int16.tobytes())
+    with open(out_path, "wb") as f:
+        f.write(_to_mp3(wav_buf.getvalue()))
 
     return out_path, orig_size, os.path.getsize(out_path)
+
+
+def _migrate_audio_to_mp3(status_cb=None) -> tuple[int, int]:
+    """Convert any remaining .wav soundboard/favorites files to .mp3 (see _to_mp3),
+    update every reference (soundboard_pages incl. nested folder_slots, favorites
+    audio_file), and delete each .wav only after its .mp3 has been written and
+    verified non-empty — a failed conversion leaves the original .wav untouched.
+    Safe to call on every app start / wizard run: if nothing needs converting this is
+    just a fast directory-free scan of already-loaded settings, no ffmpeg calls.
+    Returns (converted_count, failed_count)."""
+    converted = 0
+    failed = 0
+
+    def _report(msg: str):
+        if status_cb:
+            try:
+                status_cb(msg)
+            except Exception:
+                pass
+
+    def _convert_one(wav_path: str):
+        nonlocal converted, failed
+        mp3_path = os.path.splitext(wav_path)[0] + ".mp3"
+        try:
+            with open(wav_path, "rb") as f:
+                wav_bytes = f.read()
+            mp3_bytes = _to_mp3(wav_bytes)
+            if not mp3_bytes:
+                raise RuntimeError("ffmpeg produced an empty file")
+            with open(mp3_path, "wb") as f:
+                f.write(mp3_bytes)
+            if os.path.getsize(mp3_path) == 0:
+                raise RuntimeError("mp3 file is empty after write")
+            os.remove(wav_path)
+            converted += 1
+            _report(f"Muunnettu: {os.path.basename(wav_path)}")
+            return mp3_path
+        except Exception as e:
+            failed += 1
+            _report(f"Muunnos epäonnistui ({os.path.basename(wav_path)}): {e}")
+            try:
+                if os.path.exists(mp3_path):
+                    os.remove(mp3_path)
+            except Exception:
+                pass
+            return None
+
+    def _migrate_slots(slots: list) -> bool:
+        changed = False
+        for slot in slots:
+            path = slot.get("file", "")
+            if path and path.lower().endswith(".wav") and os.path.exists(path):
+                new_path = _convert_one(path)
+                if new_path:
+                    slot["file"] = new_path
+                    changed = True
+            if slot.get("folder_slots") and _migrate_slots(slot["folder_slots"]):
+                changed = True
+        return changed
+
+    settings = load_settings()
+    sb_changed = False
+    for page in settings.get("soundboard_pages", []):
+        if _migrate_slots(page.get("slots", [])):
+            sb_changed = True
+    if sb_changed:
+        save_settings(settings)
+
+    history_data = load_history_data()
+    fav_changed = False
+    for entry in history_data.get("favorites", []):
+        if isinstance(entry, dict):
+            path = entry.get("audio_file", "")
+            if path and path.lower().endswith(".wav") and os.path.exists(path):
+                new_path = _convert_one(path)
+                if new_path:
+                    entry["audio_file"] = new_path
+                    fav_changed = True
+    if fav_changed:
+        save_history_data(history_data)
+
+    return converted, failed
 
 
 def _sb_import_image(src_path: str, page_index: int, slot_index: int) -> tuple[str, int, int]:
@@ -5148,7 +5237,7 @@ class App(QWidget):
         # scan runs this session) can be reached right away instead of needing to wait
         # for the background discover() to finish.
         self._sonos.ip_hints = dict(self.settings.get("sonos_speaker_ips", {}))
-        self._sonos_audio_cache: bytes | None = None  # always MP3 — see _to_sonos_mp3()
+        self._sonos_audio_cache: bytes | None = None  # always MP3 — see _to_mp3()
         self._sonos_speakers: list[dict] = []  # last discovery result — {uid,name,ip,volume,coordinator_uid}
 
         # ============ Bottom tab widget: Outputs / Soundboard / Voice FX ============
@@ -7155,9 +7244,9 @@ class App(QWidget):
             audio_dir = os.path.join(BASE_PATH, "favorites_audio")
             os.makedirs(audio_dir, exist_ok=True)
             audio_hash = hashlib.md5(f"{text}|{lang_code}".encode()).hexdigest()[:16]
-            audio_path = os.path.join(audio_dir, f"{audio_hash}.wav")
+            audio_path = os.path.join(audio_dir, f"{audio_hash}.mp3")
             with open(audio_path, "wb") as f:
-                f.write(wav_bytes)
+                f.write(_to_mp3(wav_bytes))
             entry["audio_file"] = audio_path
             entry["translated_text"] = translated
             self.history_data["favorites"] = self.favorites
@@ -7169,13 +7258,17 @@ class App(QWidget):
     def _play_favorite_audio(self, audio_file: str):
         try:
             with open(audio_file, "rb") as f:
-                wav_bytes = f.read()
+                raw_bytes = f.read()
+            # Favorites are cached as MP3 now (older, pre-migration entries may still be
+            # WAV) — Sonos wants MP3 directly, local playback needs decoded WAV/PCM.
+            is_mp3 = audio_file.lower().endswith(".mp3")
             sonos_targets = self.settings.get("sonos_speech_targets", []) if self.settings.get("sonos_enabled", False) else []
             if sonos_targets:
-                self._sonos_audio_cache = _to_sonos_mp3(wav_bytes)
+                self._sonos_audio_cache = raw_bytes if is_mp3 else _to_mp3(raw_bytes)
                 _local_ip = _get_local_ip()
                 sonos_url = f"http://{_local_ip}:{StreamDeckHttpServer.PORT}/sonos/audio_cache.mp3"
                 self._push_to_sonos(sonos_targets, sonos_url, mime="audio/mpeg")
+            wav_bytes = self._load_audio_as_wav(audio_file) if is_mp3 else raw_bytes
             play_wav_bytes(
                 wav_bytes,
                 device_indices=self.get_selected_devices(),
@@ -7919,7 +8012,7 @@ class App(QWidget):
 
     def _push_soundboard_file_to_sonos(self, uids: list, file_path: str) -> None:
         """Read a soundboard clip from disk, transcode to MP3 for Sonos (see
-        _to_sonos_mp3), cache it, and push it. Runs entirely off the Qt main thread —
+        _to_mp3), cache it, and push it. Runs entirely off the Qt main thread —
         called from both a dialog Accept handler and a button click, neither of which
         may block on ffmpeg/network I/O."""
         if not uids or not self.settings.get("sonos_enabled", False):
@@ -7929,7 +8022,8 @@ class App(QWidget):
             try:
                 with open(file_path, "rb") as f:
                     raw = f.read()
-                self._sonos_audio_cache = _to_sonos_mp3(raw)
+                # Soundboard clips are stored as MP3 now — avoid a pointless re-encode.
+                self._sonos_audio_cache = raw if file_path.lower().endswith(".mp3") else _to_mp3(raw)
                 local_ip = _get_local_ip()
                 audio_url = f"http://{local_ip}:{StreamDeckHttpServer.PORT}/sonos/audio_cache.mp3"
                 missing, errors = self._sonos.play_uri(uids, audio_url, mime="audio/mpeg")
@@ -8100,20 +8194,34 @@ class App(QWidget):
         threading.Thread(target=_play, daemon=True).start()
 
     def _load_audio_as_wav(self, path: str) -> bytes:
+        """Decode any audio file (MP3/OGG/FLAC/WAV) to WAV bytes for local playback.
+        Uses ffmpeg directly — already a hard dependency (Edge TTS, Sonos transcoding)
+        — instead of the optional `pydub` package, which isn't bundled into the frozen
+        exe and would silently break soundboard playback there while working fine from
+        source (the same class of bug that made v1.3.94's Sonos support ship broken)."""
         if path.lower().endswith(".wav"):
             with open(path, "rb") as f:
                 return f.read()
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as dst_tmp:
+            dst_path = dst_tmp.name
         try:
-            from pydub import AudioSegment  # type: ignore
-            seg = AudioSegment.from_file(path)
-            buf = io.BytesIO()
-            seg.export(buf, format="wav")
-            return buf.getvalue()
-        except ImportError:
-            raise RuntimeError(
-                f"Only WAV files are supported without pydub. "
-                f"Install pydub (pip install pydub) for MP3/OGG support. File: {os.path.basename(path)}"
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-i", path, "-f", "wav", dst_path],
+                capture_output=True, text=True,
+                creationflags=(subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0),
             )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"Äänitiedoston purku epäonnistui ({os.path.basename(path)}): "
+                    f"{result.stderr.strip()[-300:]}"
+                )
+            with open(dst_path, "rb") as f:
+                return f.read()
+        finally:
+            try:
+                os.remove(dst_path)
+            except OSError:
+                pass
 
     def _save_soundboard(self):
         pages = []
@@ -8608,7 +8716,7 @@ class App(QWidget):
 
             sonos_targets = self.settings.get("sonos_speech_targets", []) if self.settings.get("sonos_enabled", False) else []
             if sonos_targets:
-                self._sonos_audio_cache = _to_sonos_mp3(wav_bytes)
+                self._sonos_audio_cache = _to_mp3(wav_bytes)
                 _local_ip = _get_local_ip()
                 sonos_url = f"http://{_local_ip}:{StreamDeckHttpServer.PORT}/sonos/audio_cache.mp3"
                 self._push_to_sonos(sonos_targets, sonos_url, mime="audio/mpeg")
@@ -12409,6 +12517,66 @@ class SetupWizard(QDialog):
         )
         summary.setWordWrap(True)
         bl.addWidget(summary)
+
+        # ── Äänitiedostot MP3:ksi — ajetaan aina (myös versiopäivitysten update-
+        #    wizardissa), mutta on nopea no-op jos mitään ei ole enää muunnettavana ──
+        _audio_w = QWidget()
+        _audio_w.setStyleSheet(
+            "QWidget { background: #0a0f1e; border: 1px solid #1c2c52; border-radius: 8px; }"
+        )
+        _audio_bl = QVBoxLayout(_audio_w)
+        _audio_bl.setContentsMargins(16, 12, 16, 14)
+        _audio_bl.setSpacing(4)
+        _audio_hdr = QLabel("🎵  Äänitiedostot")
+        _audio_hdr.setStyleSheet(
+            "color: #dce6ff; font-size: 13px; font-weight: bold; background: transparent; border: none;"
+        )
+        _audio_bl.addWidget(_audio_hdr)
+        self._fin_audio_status = QLabel("Tarkistetaan äänitiedostoja…")
+        self._fin_audio_status.setWordWrap(True)
+        self._fin_audio_status.setStyleSheet(
+            "color: #b9c5e6; font-size: 12px; background: transparent; border: none;"
+        )
+        _audio_bl.addWidget(self._fin_audio_status)
+        bl.addWidget(_audio_w)
+
+        import queue as _q_audio
+        _rq_audio = _q_audio.Queue()
+
+        def _bg_migrate():
+            try:
+                converted, failed = _migrate_audio_to_mp3(
+                    status_cb=lambda msg: _rq_audio.put(("progress", msg))
+                )
+                _rq_audio.put(("done", (converted, failed)))
+            except Exception as e:
+                _rq_audio.put(("error", str(e)))
+
+        def _poll_audio():
+            try:
+                kind, payload = _rq_audio.get_nowait()
+            except Exception:
+                return
+            if kind == "progress":
+                self._fin_audio_status.setText(payload)
+            elif kind == "done":
+                converted, failed = payload
+                _timer_audio.stop()
+                if converted == 0 and failed == 0:
+                    self._fin_audio_status.setText("Kaikki äänitiedostot ovat jo MP3-muodossa.")
+                else:
+                    msg = f"{converted} tiedostoa muunnettu MP3:ksi."
+                    if failed:
+                        msg += f" {failed} epäonnistui (alkuperäinen WAV säilytetty)."
+                    self._fin_audio_status.setText(msg)
+            elif kind == "error":
+                _timer_audio.stop()
+                self._fin_audio_status.setText(f"Äänitiedostojen tarkistus epäonnistui: {payload}")
+
+        _timer_audio = QTimer(self)
+        _timer_audio.timeout.connect(_poll_audio)
+        _timer_audio.start(150)
+        threading.Thread(target=_bg_migrate, daemon=True).start()
 
         # ── Stream Deck -osio (näkyy vain jos valittu sivulla 2) ──
         self._fin_sd_w = QWidget()
