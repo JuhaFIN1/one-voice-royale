@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.101"
+APP_VERSION = "1.3.102"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -5106,6 +5106,13 @@ class App(QWidget):
             _sonos_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
             _sonos_scroll.setWidget(self._build_sonos_card())
             self._bottom_tabs.addTab(_sonos_scroll, "  Sonos  ")
+            # Separate tab, deliberately NOT part of the speaker/volume "Sonos" tab
+            # above — this one only shows soundboard-clip shortcuts.
+            _sonos_sb_scroll = QScrollArea()
+            _sonos_sb_scroll.setWidgetResizable(True)
+            _sonos_sb_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+            _sonos_sb_scroll.setWidget(self._build_sonos_soundboard_card())
+            self._bottom_tabs.addTab(_sonos_sb_scroll, "  Sonos-klipit  ")
         # Output devices and input mic moved to Settings → Asennus.
         # Build the card to keep _device_rows_layout and input_device_combo alive,
         # but do not add it as a visible tab.
@@ -6190,29 +6197,6 @@ class App(QWidget):
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(T("color:@BORDER; margin-top:6px; margin-bottom:2px;"))
-        layout.addWidget(sep)
-
-        sb_hdr = QLabel("SOUNDBOARD → SONOS")
-        sb_hdr.setStyleSheet(T(
-            "border:none; font-size:11px; font-weight:700; letter-spacing:0.5px; color:@TEXT_FAINT;"))
-        layout.addWidget(sb_hdr)
-
-        self._sonos_shortcuts_scroll = QScrollArea()
-        self._sonos_shortcuts_scroll.setWidgetResizable(True)
-        self._sonos_shortcuts_scroll.setFixedHeight(76)
-        self._sonos_shortcuts_scroll.setStyleSheet(T(
-            "QScrollArea { background:@BG_DEEP; border:1px solid @BORDER; border-radius:6px; }"))
-        self._sonos_shortcuts_container = QWidget()
-        self._sonos_shortcuts_container.setStyleSheet("background: transparent;")
-        self._sonos_shortcuts_layout = QGridLayout(self._sonos_shortcuts_container)
-        self._sonos_shortcuts_layout.setContentsMargins(8, 6, 8, 6)
-        self._sonos_shortcuts_layout.setSpacing(6)
-        self._sonos_shortcuts_scroll.setWidget(self._sonos_shortcuts_container)
-        layout.addWidget(self._sonos_shortcuts_scroll)
-
         self._sonos_speaker_rows: dict = {}
         # Remember previously discovered speakers across restarts — don't force the user
         # to press "Hae kaiuttimet" again just to see/target speakers found last session.
@@ -6228,6 +6212,23 @@ class App(QWidget):
             # Silent background refresh so volume/group controls work without a manual click
             # (remembered entries have no live volume/coordinator info until this completes).
             self._sonos_discover()
+        return frame
+
+    def _build_sonos_soundboard_card(self) -> QWidget:
+        """Separate tab (NOT part of the speaker/volume "Sonos" tab) showing a clickable
+        icon for every soundboard slot added via right-click -> "Lisää Sonos-välilehdelle".
+        Kept entirely apart from _build_sonos_card() — that tab is speaker config only."""
+        frame, layout = self._make_card("Soundboard-klipit Sonokseen")
+        self._sonos_shortcuts_layout = QGridLayout()
+        self._sonos_shortcuts_layout.setContentsMargins(4, 4, 4, 4)
+        self._sonos_shortcuts_layout.setSpacing(6)
+        _shortcuts_container = QWidget()
+        _shortcuts_container.setLayout(self._sonos_shortcuts_layout)
+        _scroll = QScrollArea()
+        _scroll.setWidgetResizable(True)
+        _scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        _scroll.setWidget(_shortcuts_container)
+        layout.addWidget(_scroll, 1)
         self._sonos_refresh_soundboard_shortcuts()
         return frame
 
@@ -6452,6 +6453,11 @@ class App(QWidget):
         targets = [uid for uid, row in self._sonos_speaker_rows.items() if row["checkbox"].isChecked()]
         self.settings["sonos_speech_targets"] = targets
         save_settings(self.settings)
+        if targets:
+            names = [self._sonos_speaker_rows[u]["name"] for u in targets]
+            self.append_status(f"Sonos TTS-kohteet: {', '.join(names)}")
+        else:
+            self.append_status("Sonos TTS-kohteet: ei yhtään valittu")
 
     def _sonos_master_press(self):
         # Master governs every listed speaker — the per-row checkbox is a separate
