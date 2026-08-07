@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.106"
+APP_VERSION = "1.3.107"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -1764,6 +1764,27 @@ class SonosManager:
         speaker = self._get(uid)
         if speaker is not None:
             speaker.volume = max(0, min(100, int(volume_0_100)))
+
+    def get_volume(self, uid: str) -> int | None:
+        speaker = self._get(uid)
+        if speaker is None:
+            return None
+        try:
+            return int(speaker.volume)
+        except Exception:
+            return None
+
+    def is_playing(self, uid: str) -> bool | None:
+        """True/False if the speaker's transport state could be read, None if the
+        speaker couldn't be reached at all (caller should stop waiting, not loop forever)."""
+        speaker = self._get(uid)
+        if speaker is None:
+            return None
+        try:
+            state = speaker.get_current_transport_info().get("current_transport_state")
+            return state in ("PLAYING", "TRANSITIONING")
+        except Exception:
+            return None
 
     def set_relative(self, baseline: dict[str, int], scale: float) -> None:
         """Scale each speaker's volume proportionally from a captured baseline.
@@ -6493,49 +6514,82 @@ class App(QWidget):
             return
         slot = slots[slot_idx]
 
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QDialogButtonBox, QRadioButton, QLabel
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QDialogButtonBox, QLabel, QPushButton as _QPB2
+        from PyQt6.QtWidgets import QSlider as _QSlider2
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Valitse Sonos-kaiutin — {slot.get('name', 'Slot')}")
-        dlg.resize(320, 260)
+        dlg.resize(340, 90 + 64 * max(1, len(self._sonos_speakers)))
         dlg.setStyleSheet(
             "QDialog { background: #05070f; color: #b9c5e6; }"
-            "QRadioButton { color: #b9c5e6; font-size: 13px; padding: 4px; }"
-            "QPushButton { background: #101a36; border: 1px solid #1c2c52; border-radius: 5px;"
-            " color: #b9c5e6; padding: 6px 16px; font-size: 12px; }"
-            "QPushButton:hover { background: #6aa8ff; border-color: #6aa8ff; }"
+            "QPushButton { background: #101a36; border: 1px solid #1c2c52; border-radius: 6px;"
+            " color: #dce6ff; padding: 8px 12px; font-size: 13px; font-weight: 600; text-align: left; }"
+            "QPushButton:hover { background: #1c3a6e; border-color: #6aa8ff; }"
         )
         vbox = QVBoxLayout(dlg)
         vbox.setContentsMargins(16, 12, 16, 12)
-        vbox.setSpacing(6)
-        lbl = QLabel("Mihin kaiuttimeen tämä klippi soi nyt:")
-        lbl.setStyleSheet("color: #b9c5e6; font-size: 12px; font-weight: 600; padding-bottom: 4px;")
+        vbox.setSpacing(8)
+        lbl = QLabel("Paina kaiutinta soittaaksesi klipin sinne heti:")
+        lbl.setStyleSheet("color: #b9c5e6; font-size: 12px; font-weight: 600; padding-bottom: 2px;")
         vbox.addWidget(lbl)
 
-        # Single speaker only — a soundboard clip plays to exactly one target per press.
-        saved_uids = set(slot.get("sonos_speakers", []))
-        radios = []
-        for i, sp in enumerate(self._sonos_speakers):
+        def _play_and_close(uid: str, slider: "_QSlider2"):
+            # Remember the pick so the next click of this icon defaults to the same speaker.
+            slot["sonos_speakers"] = [uid]
+            save_settings(self.settings)
+            self._push_soundboard_file_to_sonos([uid], slot.get("file", ""), temp_volume=slider.value())
+            dlg.accept()
+
+        for sp in self._sonos_speakers:
             uid = sp.get("uid", "")
-            rb = QRadioButton(sp.get("name", "") or uid)
-            rb.setChecked(uid in saved_uids or (i == 0 and not saved_uids))
-            rb.setProperty("uid", uid)
-            vbox.addWidget(rb)
-            radios.append(rb)
+            row_w = QWidget()
+            row_w.setStyleSheet("background: transparent;")
+            row = QHBoxLayout(row_w)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(8)
+
+            play_btn = _QPB2(f"🔊  {sp.get('name', '') or uid}")
+            play_btn.setFixedHeight(38)
+
+            sl = _QSlider2(Qt.Orientation.Horizontal)
+            sl.setRange(0, 100)
+            sl.setValue(int(sp.get("volume", 50)))  # this speaker's own current volume
+            sl.setFixedWidth(90)
+            sl.setStyleSheet(T(
+                "QSlider::groove:horizontal { height:4px; background:@BORDER; border-radius:2px; }"
+                "QSlider::handle:horizontal { width:12px; height:12px; margin:-4px 0;"
+                " background:@PURPLE_BRIGHT; border-radius:6px; }"
+                "QSlider::sub-page:horizontal { background:@GRAD_ACCENT; border-radius:2px; }"
+            ))
+            pct_lbl = QLabel(f"{sl.value()}%")
+            pct_lbl.setFixedWidth(32)
+            pct_lbl.setStyleSheet("color: #8a9bc4; font-size: 11px; background: transparent;")
+            sl.valueChanged.connect(lambda v, _l=pct_lbl: _l.setText(f"{v}%"))
+
+            play_btn.clicked.connect(lambda _checked=False, u=uid, s=sl: _play_and_close(u, s))
+
+            row.addWidget(play_btn, 1)
+            row.addWidget(sl)
+            row.addWidget(pct_lbl)
+            vbox.addWidget(row_w)
+
+        hint = QLabel(
+            "Voimakkuus palautuu automaattisesti alkuperäiseen heti kun klippi on soitettu loppuun."
+        )
+        hint.setStyleSheet("color: #546a94; font-size: 10px; background: transparent; margin-top: 4px;")
+        hint.setWordWrap(True)
+        vbox.addWidget(hint)
 
         vbox.addStretch()
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btns.accepted.connect(dlg.accept)
-        btns.rejected.connect(dlg.reject)
-        vbox.addWidget(btns)
+        cancel_btn = _QPB2("Peruuta")
+        cancel_btn.setFixedHeight(32)
+        cancel_btn.clicked.connect(dlg.reject)
+        cancel_row = QHBoxLayout()
+        cancel_row.addStretch()
+        cancel_row.addWidget(cancel_btn)
+        cancel_row.addStretch()
+        vbox.addLayout(cancel_row)
 
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            chosen = next((rb.property("uid") for rb in radios if rb.isChecked()), None)
-            if not chosen:
-                return
-            # Remember the pick so the next click of this icon pre-selects the same speaker.
-            slot["sonos_speakers"] = [chosen]
-            save_settings(self.settings)
-            self._push_soundboard_file_to_sonos([chosen], slot.get("file", ""))
+        dlg.exec()
 
     def _sonos_discover(self):
         self._sonos_discover_btn.setEnabled(False)
@@ -8055,16 +8109,29 @@ class App(QWidget):
 
         threading.Thread(target=_run, daemon=True).start()
 
-    def _push_soundboard_file_to_sonos(self, uids: list, file_path: str) -> None:
+    def _push_soundboard_file_to_sonos(self, uids: list, file_path: str,
+                                        temp_volume: int | None = None) -> None:
         """Read a soundboard clip from disk, transcode to MP3 for Sonos (see
         _to_mp3), cache it, and push it. Runs entirely off the Qt main thread —
         called from both a dialog Accept handler and a button click, neither of which
-        may block on ffmpeg/network I/O."""
+        may block on ffmpeg/network I/O.
+
+        temp_volume, if given, is applied to the (single) target speaker just before
+        playback and restored to whatever it was right after the clip finishes — a
+        one-off boost for this play only, never a permanent change."""
         if not uids or not self.settings.get("sonos_enabled", False):
             return
 
         def _run():
+            original_volume = None
+            restore_uid = None
             try:
+                if temp_volume is not None and len(uids) == 1:
+                    restore_uid = uids[0]
+                    original_volume = self._sonos.get_volume(restore_uid)
+                    if original_volume is not None and int(temp_volume) != original_volume:
+                        self._sonos.set_volume(restore_uid, int(temp_volume))
+
                 with open(file_path, "rb") as f:
                     raw = f.read()
                 # Soundboard clips are stored as MP3 now — avoid a pointless re-encode.
@@ -8082,6 +8149,18 @@ class App(QWidget):
                     self.append_status("Sonos-virhe: " + "; ".join(errors))
             except Exception as e:
                 self.append_status(f"Sonos-virhe: {e}")
+            finally:
+                if restore_uid is not None and original_volume is not None:
+                    # Wait for the clip to actually finish (or give up after 60s so a
+                    # stuck/unreachable speaker never leaves the volume changed forever).
+                    time.sleep(1.0)  # let it leave idle/STOPPED before we start polling
+                    deadline = time.time() + 60
+                    while time.time() < deadline:
+                        playing = self._sonos.is_playing(restore_uid)
+                        if not playing:
+                            break
+                        time.sleep(1.0)
+                    self._sonos.set_volume(restore_uid, original_volume)
 
         threading.Thread(target=_run, daemon=True).start()
 
