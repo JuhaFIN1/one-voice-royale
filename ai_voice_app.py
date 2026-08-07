@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.107"
+APP_VERSION = "1.3.108"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -10508,6 +10508,16 @@ class SetupWizard(QDialog):
         self.setFixedSize(780, 900)
         self.setStyleSheet(self._STYLE)
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowCloseButtonHint)
+        # No explicit position previously — left to Qt/Windows default placement, which
+        # on multi-monitor setups can land the wizard on whichever screen last had focus
+        # instead of the primary one. Always center it on the primary screen instead.
+        _screen = QApplication.primaryScreen()
+        if _screen is not None:
+            _geo = _screen.availableGeometry()
+            self.move(
+                _geo.x() + (_geo.width() - 780) // 2,
+                _geo.y() + (_geo.height() - 900) // 2,
+            )
         self._api_key = ""
         self._wiz_rec_buf = []
         self._wiz_rec_thread = None
