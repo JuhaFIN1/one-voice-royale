@@ -11,3 +11,4 @@ pvporcupine
 scipy
 deep-translator
 stftpitchshift
+soco

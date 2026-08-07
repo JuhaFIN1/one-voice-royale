@@ -25,6 +25,7 @@ REQUIRED = {
     "edge_tts": "edge-tts",
     "deep_translator": "deep-translator",
     "stftpitchshift": "stftpitchshift",
+    "soco": "soco",
 }
 # keyboard requires root/accessibility permissions on macOS and crashes on import without them
 if sys.platform != "darwin":
@@ -65,6 +66,7 @@ except Exception:
 import numpy as np
 import pyttsx3
 import requests
+import soco
 import sounddevice as sd
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -345,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.93"
+APP_VERSION = "1.3.94"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -376,6 +378,9 @@ DEFAULT_SETTINGS = {
     "ha_url": "",
     "ha_token": "",
     "ha_players": [],
+    "sonos_enabled": False,
+    "sonos_speech_targets": [],
+    "sonos_speaker_names": {},
     "voice_fx_output_device": None,
     "voice_fx_monitor_device": None,
     "voice_fx_hear_myself": False,
@@ -1621,6 +1626,20 @@ class StreamDeckHttpServer:
                     self._cors()
                     self.end_headers()
                     self.wfile.write(body)
+                elif self.path == "/sonos/tts_current.wav":
+                    # Serve the most recently generated TTS/favorite WAV for Sonos play_uri()
+                    body = getattr(app, "_sonos_tts_cache", None)
+                    if body:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "audio/wav")
+                        self.send_header("Content-Length", str(len(body)))
+                        self._cors()
+                        self.end_headers()
+                        self.wfile.write(body)
+                    else:
+                        self.send_response(404)
+                        self._cors()
+                        self.end_headers()
                 else:
                     self.send_response(404)
                     self._cors()
@@ -1662,6 +1681,107 @@ class StreamDeckHttpServer:
             status_cb(f"Stream Deck: port {self.PORT} busy — plugin won't connect")
         except Exception as e:
             status_cb(f"Stream Deck HTTP: {e}")
+
+
+# =========================
+# SONOS HELPERS
+# =========================
+class SonosManager:
+    """Thin wrapper around the `soco` library for local-network Sonos control.
+
+    All methods here perform blocking network I/O (SSDP discovery or UPnP/SOAP
+    calls) and must always be invoked from a background thread — never from the
+    Qt main thread. Results are handed back via queue.Queue + QTimer polling by
+    the caller, per this codebase's thread-safety rule (see CLAUDE.md).
+    """
+
+    def __init__(self):
+        self._by_uid: dict[str, "soco.SoCo"] = {}
+        self._lock = threading.Lock()
+
+    def discover(self, timeout: float = 5.0) -> list[dict]:
+        """Scan the LAN for Sonos speakers. Returns a list of speaker info dicts
+        and refreshes the internal uid -> SoCo cache used by every other method."""
+        found = soco.discover(timeout=timeout) or set()
+        result = []
+        with self._lock:
+            self._by_uid = {}
+            for sp in found:
+                try:
+                    coord = sp.group.coordinator
+                    info = {
+                        "uid": sp.uid,
+                        "name": sp.player_name,
+                        "ip": sp.ip_address,
+                        "volume": sp.volume,
+                        "coordinator_uid": coord.uid if coord else sp.uid,
+                    }
+                except Exception:
+                    continue
+                self._by_uid[sp.uid] = sp
+                result.append(info)
+        return sorted(result, key=lambda d: d["name"].lower())
+
+    def _get(self, uid: str):
+        with self._lock:
+            return self._by_uid.get(uid)
+
+    def join(self, uid: str, target_uid: str) -> None:
+        speaker = self._get(uid)
+        target = self._get(target_uid)
+        if speaker is not None and target is not None and speaker is not target:
+            speaker.join(target)
+
+    def unjoin(self, uid: str) -> None:
+        speaker = self._get(uid)
+        if speaker is not None:
+            speaker.unjoin()
+
+    def set_volume(self, uid: str, volume_0_100: int) -> None:
+        speaker = self._get(uid)
+        if speaker is not None:
+            speaker.volume = max(0, min(100, int(volume_0_100)))
+
+    def set_relative(self, baseline: dict[str, int], scale: float) -> None:
+        """Scale each speaker's volume proportionally from a captured baseline.
+
+        `baseline` is {uid: volume_at_gesture_start}, captured once when the
+        master slider gesture begins — avoids compounding rounding error from
+        repeatedly rescaling an already-rescaled value on every slider tick."""
+        for uid, base_vol in baseline.items():
+            speaker = self._get(uid)
+            if speaker is not None:
+                speaker.volume = max(0, min(100, round(base_vol * scale)))
+
+    def _coordinators_for(self, uids: list[str]) -> list:
+        """Resolve a uid list down to the unique group-coordinator speaker objects.
+        Only a group's coordinator accepts transport commands (play/stop) in Sonos'
+        UPnP model — sending them to non-coordinator members fails or is ignored."""
+        coords = {}
+        for uid in uids:
+            speaker = self._get(uid)
+            if speaker is None:
+                continue
+            try:
+                coord = speaker.group.coordinator or speaker
+            except Exception:
+                coord = speaker
+            coords[coord.uid] = coord
+        return list(coords.values())
+
+    def play_uri(self, uids: list[str], url: str, title: str = "One Voice Royale") -> None:
+        for coord in self._coordinators_for(uids):
+            try:
+                coord.play_uri(url, title=title)
+            except Exception:
+                pass
+
+    def stop(self, uids: list[str]) -> None:
+        for coord in self._coordinators_for(uids):
+            try:
+                coord.stop()
+            except Exception:
+                pass
 
 
 # =========================
@@ -2327,15 +2447,90 @@ class SoundboardButton(QWidget):
             menu.addSeparator()
             ha_label = "HA Media Players… (aktiivinen)" if self._data.get("ha_players") else "HA Media Players…"
             menu.addAction(ha_label, self._assign_ha_players)
+            _app_ref = self._find_app()
+            if _app_ref and _app_ref.settings.get("sonos_enabled", False):
+                sonos_label = ("Sonos-kaiuttimet… (aktiivinen)" if self._data.get("sonos_speakers")
+                              else "Sonos-kaiuttimet…")
+                menu.addAction(sonos_label, self._assign_sonos_speakers)
         _name = self._data.get("name", "")
         has_content = bool(self._data.get("file") or self._data.get("image")
                           or self._data.get("link_page_name") or self._data.get("subfolder")
-                          or self._data.get("ha_players")
+                          or self._data.get("ha_players") or self._data.get("sonos_speakers")
                           or (_name and not _name.startswith("Slot ")))
         if has_content:
             menu.addSeparator()
             menu.addAction("Clear", self._clear)
         menu.exec(self.mapToGlobal(pos))
+
+    def _find_app(self):
+        """Walk up the widget tree to find the App instance (has a `.settings` dict)."""
+        p = self.parent()
+        while p is not None:
+            if hasattr(p, "settings"):
+                return p
+            p = p.parent()
+        return None
+
+    def _assign_sonos_speakers(self):
+        """Open dialog to assign Sonos speaker targets to this soundboard slot."""
+        app = self._find_app()
+        if not app or not app.settings.get("sonos_enabled", False):
+            return
+        # Prefer the live discovery cache; fall back to last-known names so the
+        # dialog still works if the user hasn't pressed "Hae kaiuttimet" this session.
+        speakers = list(getattr(app, "_sonos_speakers", []) or [])
+        if not speakers:
+            speakers = [{"uid": uid, "name": name}
+                       for uid, name in app.settings.get("sonos_speaker_names", {}).items()]
+        if not speakers:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "Ei Sonos-kaiuttimia",
+                "Hae ensin kaiuttimet Sonos-välilehdeltä pääikkunassa."
+            )
+            return
+
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QDialogButtonBox, QCheckBox, QLabel
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Sonos-kaiuttimet — {self._data.get('name', 'Slot')}")
+        dlg.resize(380, 300)
+        dlg.setStyleSheet(
+            "QDialog { background: #05070f; color: #b9c5e6; }"
+            "QCheckBox { color: #b9c5e6; font-size: 13px; padding: 4px; }"
+            "QPushButton { background: #101a36; border: 1px solid #1c2c52; border-radius: 5px;"
+            " color: #b9c5e6; padding: 6px 16px; font-size: 12px; }"
+            "QPushButton:hover { background: #6aa8ff; border-color: #6aa8ff; }"
+            "QLabel { color: #8a9bc4; font-size: 11px; }"
+        )
+        vbox = QVBoxLayout(dlg)
+        vbox.setContentsMargins(16, 12, 16, 12)
+        vbox.setSpacing(6)
+        lbl = QLabel("Valitse Sonos-kaiuttimet joille ääni lähetetään:")
+        lbl.setStyleSheet("color: #b9c5e6; font-size: 12px; font-weight: 600; padding-bottom: 4px;")
+        vbox.addWidget(lbl)
+
+        current_speakers = set(self._data.get("sonos_speakers", []))
+        checkboxes = []
+        for sp in speakers:
+            uid = sp.get("uid", "")
+            name = sp.get("name", "") or uid
+            cb = QCheckBox(name)
+            cb.setChecked(uid in current_speakers)
+            cb.setProperty("uid", uid)
+            vbox.addWidget(cb)
+            checkboxes.append(cb)
+
+        vbox.addStretch()
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        vbox.addWidget(btns)
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            selected = [cb.property("uid") for cb in checkboxes if cb.isChecked()]
+            self._data["sonos_speakers"] = selected
+            self._refresh()
+            self.data_changed.emit(self.slot_index)
 
     def _assign_ha_players(self):
         """Open dialog to assign HA media_player entities to this soundboard slot."""
@@ -4883,10 +5078,17 @@ class App(QWidget):
         top_row.addWidget(self._build_speech_card(), 2)
         top_row.addWidget(self._build_history_card(), 1)
 
+        # Sonos speaker control — must exist before the Sonos tab is built below
+        self._sonos = SonosManager()
+        self._sonos_tts_cache: bytes | None = None
+        self._sonos_speakers: list[dict] = []  # last discovery result — {uid,name,ip,volume,coordinator_uid}
+
         # ============ Bottom tab widget: Outputs / Soundboard / Voice FX ============
         self._bottom_tabs = QTabWidget()
         self._bottom_tabs.addTab(self._build_soundboard_card(), "  Soundboard  ")
         self._bottom_tabs.addTab(self._build_voice_fx_card(), "  Voice FX  ")
+        if self.settings.get("sonos_enabled", False):
+            self._bottom_tabs.addTab(self._build_sonos_card(), "  Sonos  ")
         # Output devices and input mic moved to Settings → Asennus.
         # Build the card to keep _device_rows_layout and input_device_combo alive,
         # but do not add it as a visible tab.
@@ -5903,6 +6105,239 @@ class App(QWidget):
         layout.addWidget(hint)
         return frame
 
+    # ============ Sonos card ============
+
+    def _build_sonos_card(self) -> QWidget:
+        frame, layout = self._make_card("Sonos — kaiuttimet paikallisverkossa")
+        from PyQt6.QtWidgets import QSlider as _QSlider
+
+        top_row = QHBoxLayout()
+        self._sonos_discover_btn = QPushButton("🔎  Hae kaiuttimet")
+        self._sonos_discover_btn.clicked.connect(self._sonos_discover)
+        top_row.addWidget(self._sonos_discover_btn)
+        self._sonos_status_lbl = QLabel("Ei kaiuttimia haettu.")
+        self._sonos_status_lbl.setStyleSheet(T("color:@TEXT_FAINT; font-size:11px; border:none;"))
+        top_row.addWidget(self._sonos_status_lbl, 1)
+        layout.addLayout(top_row)
+
+        master_row = QHBoxLayout()
+        master_lbl = QLabel("MASTER (suhteessa):")
+        master_lbl.setStyleSheet(T(
+            "border:none; font-size:11px; font-weight:700; letter-spacing:0.5px; color:@TEXT_FAINT;"))
+        master_row.addWidget(master_lbl)
+        self._sonos_master_slider = _QSlider(Qt.Orientation.Horizontal)
+        self._sonos_master_slider.setRange(0, 100)
+        self._sonos_master_slider.setValue(50)
+        self._sonos_master_slider.setStyleSheet(T(
+            "QSlider::groove:horizontal { height:4px; background:@BORDER; border-radius:2px; }"
+            "QSlider::handle:horizontal { width:12px; height:12px; margin:-4px 0;"
+            " background:@PURPLE_BRIGHT; border-radius:6px; }"
+            "QSlider::sub-page:horizontal { background:@GRAD_ACCENT; border-radius:2px; }"
+        ))
+        self._sonos_master_baseline: dict = {}
+        self._sonos_master_press_val = 50
+        self._sonos_master_slider.sliderPressed.connect(self._sonos_master_press)
+        self._sonos_master_slider.sliderReleased.connect(self._sonos_master_release)
+        self._sonos_master_slider.valueChanged.connect(self._sonos_master_move)
+        master_row.addWidget(self._sonos_master_slider, 1)
+        layout.addLayout(master_row)
+
+        self._sonos_list_scroll = QScrollArea()
+        self._sonos_list_scroll.setWidgetResizable(True)
+        self._sonos_list_scroll.setFixedHeight(160)
+        self._sonos_list_scroll.setStyleSheet(T(
+            "QScrollArea { background:@BG_DEEP; border:1px solid @BORDER; border-radius:6px; }"))
+        self._sonos_list_container = QWidget()
+        self._sonos_list_container.setStyleSheet("background: transparent;")
+        self._sonos_list_layout = QVBoxLayout(self._sonos_list_container)
+        self._sonos_list_layout.setContentsMargins(8, 6, 8, 6)
+        self._sonos_list_layout.setSpacing(4)
+        self._sonos_list_scroll.setWidget(self._sonos_list_container)
+        layout.addWidget(self._sonos_list_scroll)
+
+        grp_row = QHBoxLayout()
+        self._sonos_group_btn = QPushButton("🔗  Ryhmitä valitut")
+        self._sonos_group_btn.clicked.connect(self._sonos_group_selected)
+        grp_row.addWidget(self._sonos_group_btn)
+        self._sonos_ungroup_btn = QPushButton("✂️  Erota kaikki")
+        self._sonos_ungroup_btn.clicked.connect(self._sonos_ungroup_all)
+        grp_row.addWidget(self._sonos_ungroup_btn)
+        layout.addLayout(grp_row)
+
+        hint = QLabel(
+            "Rasti = puheen/käännöksen TTS-kohde. Liu'ut ohjaavat kunkin kaiuttimen omaa "
+            "äänenvoimakkuutta; MASTER-liuku skaalaa kaikkia valittuja kaiuttimia suhteessa toisiinsa."
+        )
+        hint.setStyleSheet(T("color:@TEXT_FAINT; font-size:11px; border:none; margin-top:4px;"))
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self._sonos_speaker_rows: dict = {}
+        self._sonos_populate_from_cache()
+        return frame
+
+    def _sonos_discover(self):
+        self._sonos_discover_btn.setEnabled(False)
+        self._sonos_status_lbl.setText("Haetaan kaiuttimia…")
+        import queue as _q
+        _rq = _q.Queue()
+
+        def _run():
+            try:
+                speakers = self._sonos.discover(timeout=6.0)
+                _rq.put(("ok", speakers))
+            except Exception as e:
+                _rq.put(("err", str(e)))
+
+        def _poll():
+            try:
+                kind, payload = _rq.get_nowait()
+            except Exception:
+                return
+            self._sonos_discover_timer.stop()
+            self._sonos_discover_btn.setEnabled(True)
+            if kind == "ok":
+                self._sonos_speakers = payload
+                self.settings["sonos_speaker_names"] = {sp["uid"]: sp["name"] for sp in payload}
+                save_settings(self.settings)
+                self._sonos_status_lbl.setText(
+                    f"{len(payload)} kaiutinta löytyi." if payload
+                    else "Ei kaiuttimia löytynyt (tarkista sama verkko / palomuuri)."
+                )
+                self._sonos_populate_from_cache()
+            else:
+                self._sonos_status_lbl.setText(f"Haku epäonnistui: {payload}")
+
+        self._sonos_discover_timer = QTimer(self)
+        self._sonos_discover_timer.timeout.connect(_poll)
+        self._sonos_discover_timer.start(300)
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _sonos_populate_from_cache(self):
+        while self._sonos_list_layout.count():
+            item = self._sonos_list_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        self._sonos_speaker_rows = {}
+        targets = set(self.settings.get("sonos_speech_targets", []))
+        for info in self._sonos_speakers:
+            self._sonos_add_row(info, checked=info["uid"] in targets)
+        if not self._sonos_speakers:
+            empty_lbl = QLabel("Ei kaiuttimia — paina \"Hae kaiuttimet\".")
+            empty_lbl.setStyleSheet(T("color:@TEXT_FAINT; font-size:11px; border:none;"))
+            self._sonos_list_layout.addWidget(empty_lbl)
+        self._sonos_list_layout.addStretch()
+
+    def _sonos_add_row(self, info: dict, checked: bool):
+        from PyQt6.QtWidgets import QSlider as _QSlider
+        row_w = QWidget()
+        row_w.setStyleSheet("background: transparent;")
+        h = QHBoxLayout(row_w)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(8)
+
+        cb = QCheckBox()
+        cb.setChecked(checked)
+        cb.setToolTip("Puhe/TTS-kohde")
+        cb.stateChanged.connect(self._sonos_on_target_toggle)
+        h.addWidget(cb)
+
+        name_lbl = QLabel(info["name"])
+        name_lbl.setStyleSheet(T("color:@TEXT; font-size:12px; border:none;"))
+        name_lbl.setFixedWidth(120)
+        h.addWidget(name_lbl)
+
+        vol_slider = _QSlider(Qt.Orientation.Horizontal)
+        vol_slider.setRange(0, 100)
+        vol_slider.setValue(int(info.get("volume", 50)))
+        vol_slider.setStyleSheet(T(
+            "QSlider::groove:horizontal { height:4px; background:@BORDER; border-radius:2px; }"
+            "QSlider::handle:horizontal { width:12px; height:12px; margin:-4px 0;"
+            " background:@PURPLE_BRIGHT; border-radius:6px; }"
+            "QSlider::sub-page:horizontal { background:@GRAD_ACCENT; border-radius:2px; }"
+        ))
+        h.addWidget(vol_slider, 1)
+
+        vol_label = QLabel(f"{vol_slider.value()}%")
+        vol_label.setFixedWidth(34)
+        vol_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        vol_label.setStyleSheet(T("color:@TEXT_DIM; font-size:10px; background:transparent; border:none;"))
+        h.addWidget(vol_label)
+
+        uid = info["uid"]
+
+        def _on_vol_change(value, _uid=uid, _lbl=vol_label):
+            _lbl.setText(f"{value}%")
+            threading.Thread(target=lambda: self._sonos.set_volume(_uid, value), daemon=True).start()
+
+        vol_slider.valueChanged.connect(_on_vol_change)
+
+        self._sonos_list_layout.addWidget(row_w)
+        self._sonos_speaker_rows[uid] = {
+            "checkbox": cb, "vol_slider": vol_slider, "vol_label": vol_label, "name": info["name"],
+        }
+
+    def _sonos_on_target_toggle(self, _state=None):
+        targets = [uid for uid, row in self._sonos_speaker_rows.items() if row["checkbox"].isChecked()]
+        self.settings["sonos_speech_targets"] = targets
+        save_settings(self.settings)
+
+    def _sonos_master_press(self):
+        self._sonos_master_baseline = {
+            uid: row["vol_slider"].value()
+            for uid, row in self._sonos_speaker_rows.items()
+            if row["checkbox"].isChecked()
+        }
+        self._sonos_master_press_val = self._sonos_master_slider.value() or 50
+
+    def _sonos_master_move(self, value: int):
+        if not self._sonos_master_baseline:
+            return
+        scale = value / max(1, self._sonos_master_press_val)
+        for uid, base_vol in self._sonos_master_baseline.items():
+            new_vol = max(0, min(100, round(base_vol * scale)))
+            row = self._sonos_speaker_rows.get(uid)
+            if row:
+                row["vol_slider"].blockSignals(True)
+                row["vol_slider"].setValue(new_vol)
+                row["vol_label"].setText(f"{new_vol}%")
+                row["vol_slider"].blockSignals(False)
+        baseline_snapshot = dict(self._sonos_master_baseline)
+        threading.Thread(target=lambda: self._sonos.set_relative(baseline_snapshot, scale), daemon=True).start()
+
+    def _sonos_master_release(self):
+        self._sonos_master_baseline = {}
+        self._sonos_master_slider.blockSignals(True)
+        self._sonos_master_slider.setValue(50)
+        self._sonos_master_slider.blockSignals(False)
+
+    def _sonos_group_selected(self):
+        uids = [uid for uid, row in self._sonos_speaker_rows.items() if row["checkbox"].isChecked()]
+        if len(uids) < 2:
+            self.append_status("Sonos: valitse vähintään 2 kaiutinta ryhmittääksesi.")
+            return
+        coordinator, members = uids[0], uids[1:]
+
+        def _run():
+            for m in members:
+                self._sonos.join(m, coordinator)
+            self.append_status(f"Sonos: ryhmitetty {len(uids)} kaiutinta.")
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _sonos_ungroup_all(self):
+        uids = list(self._sonos_speaker_rows.keys())
+        if not uids:
+            return
+
+        def _run():
+            for uid in uids:
+                self._sonos.unjoin(uid)
+            self.append_status("Sonos: kaikki kaiuttimet erotettu.")
+
+        threading.Thread(target=_run, daemon=True).start()
+
     def _refresh_fx_output_status(self):
         if not hasattr(self, "_fx_output_status_lbl"):
             return
@@ -6500,6 +6935,12 @@ class App(QWidget):
         try:
             with open(audio_file, "rb") as f:
                 wav_bytes = f.read()
+            sonos_targets = self.settings.get("sonos_speech_targets", []) if self.settings.get("sonos_enabled", False) else []
+            if sonos_targets:
+                self._sonos_tts_cache = wav_bytes
+                _local_ip = _get_local_ip()
+                sonos_url = f"http://{_local_ip}:{StreamDeckHttpServer.PORT}/sonos/tts_current.wav"
+                self._push_to_sonos(sonos_targets, sonos_url)
             play_wav_bytes(
                 wav_bytes,
                 device_indices=self.get_selected_devices(),
@@ -7216,6 +7657,23 @@ class App(QWidget):
     def update_output_level(self, peak: float):
         self.sig_out_level.emit(int(min(peak * 1000, 1000)))
 
+    # ============ Sonos ============
+
+    def _push_to_sonos(self, uids: list, audio_url: str) -> None:
+        """Push a servable audio URL to the given Sonos speaker uids. Always runs the
+        blocking soco play_uri() call off the Qt main thread, per the codebase's
+        thread-safety rule (no direct blocking network I/O on the UI thread)."""
+        if not uids or not self.settings.get("sonos_enabled", False):
+            return
+
+        def _run():
+            try:
+                self._sonos.play_uri(uids, audio_url)
+            except Exception as e:
+                self.append_status(f"Sonos-virhe: {e}")
+
+        threading.Thread(target=_run, daemon=True).start()
+
     # ============ Soundboard ============
 
     def _play_soundboard_slot(self, page_index: int, slot_index: int):
@@ -7236,6 +7694,19 @@ class App(QWidget):
                     return
             self.append_status(f"Soundboard: sivu '{link_name}' ei löydy")
             return
+
+        # ── Sonos path (independent of HA/local below — runs in parallel with
+        #    whichever of those also fire, so a slot can target all three at once) ──
+        sonos_uids = data.get("sonos_speakers", [])
+        if sonos_uids:
+            sonos_path = data.get("file", "")
+            if sonos_path and os.path.exists(sonos_path):
+                _local_ip = _get_local_ip()
+                sonos_audio_url = (f"http://{_local_ip}:{StreamDeckHttpServer.PORT}"
+                                    f"/soundboard/audio/{page_index}/{slot_index}")
+                self._push_to_sonos(sonos_uids, sonos_audio_url)
+            else:
+                self.append_status(f"Sonos Soundboard p{page_index+1} slot {slot_index+1}: ei ääntä (oikeaklikkaa)")
 
         # ── HA Media Player path ──────────────────────────────────────────
         ha_entity_ids = data.get("ha_players", [])
@@ -7866,6 +8337,13 @@ class App(QWidget):
                 else:
                     raise
 
+            sonos_targets = self.settings.get("sonos_speech_targets", []) if self.settings.get("sonos_enabled", False) else []
+            if sonos_targets:
+                self._sonos_tts_cache = wav_bytes
+                _local_ip = _get_local_ip()
+                sonos_url = f"http://{_local_ip}:{StreamDeckHttpServer.PORT}/sonos/tts_current.wav"
+                self._push_to_sonos(sonos_targets, sonos_url)
+
             self.add_to_history(text)
             selected_devices = self.get_selected_devices()
             if selected_devices:
@@ -8124,6 +8602,18 @@ def open_settings_dialog(parent_app: "App") -> None:
             f_general.addRow("", _desc("Autostart ei toimi kehitysmoodissa — rakenna ensin exe-tiedosto."))
         else:
             f_general.addRow("", _desc("Muutos astuu voimaan heti — tallentaminen ei tarvita."))
+
+    # ---- Yleiset: Ominaisuudet (valinnaiset) ----
+    f_general.addRow(_header("Ominaisuudet"))
+
+    sonos_enabled_chk = QCheckBox("Sonos-kaiuttimet käytössä")
+    sonos_enabled_chk.setChecked(settings.get("sonos_enabled", False))
+    sonos_enabled_chk.setStyleSheet("color: #dce6ff; background: transparent;")
+    f_general.addRow(_lbl("Sonos:"), sonos_enabled_chk)
+    f_general.addRow("", _desc(
+        "Näyttää \"Sonos\"-välilehden pääikkunassa (kaiuttimien haku, ryhmitys, äänenvoimakkuus) "
+        "ja sallii äänen työntämisen Sonos-kaiuttimiin. Vaatii uudelleenkäynnistyksen."
+    ))
 
     # ══════════════════════════════════════════════════════════════════
     # API-avaimet
@@ -9408,6 +9898,7 @@ def open_settings_dialog(parent_app: "App") -> None:
                 if eid:
                     saved_ha.append({"entity_id": eid, "name": name})
         new_settings["ha_players"] = saved_ha
+        new_settings["sonos_enabled"] = sonos_enabled_chk.isChecked()
 
         # Save OpenAI API key to credentials.env and update globals
         new_key = api_key_edit.text().strip()
@@ -9548,6 +10039,7 @@ class SetupWizard(QDialog):
         self._svc_tts = "edge"          # "edge" | "elevenlabs"
         self._svc_routing = "simple"    # "simple" | "gaming"
         self._svc_mixer = False         # bool — fyysinen mikseri (RodeCaster ym.) → Voicemeeter
+        self._svc_sonos = False         # bool — Sonos-kaiutinohjaus käytössä (valinnainen)
         # Dynaaminen "Vaihe X/Y" -mekanismi: _header() rekisteröi jokaisen sivun subtitle-labelin
         # tähän sanakirjaan rakennusjärjestyksessä (== stack-indeksi), ja _navigate() päivittää
         # tekstin joka kerta senhetkisen _get_page_sequence()-tuloksen mukaan. Näin numerointi on
@@ -9820,11 +10312,14 @@ class SetupWizard(QDialog):
             "One Voice Royalen napit Stream Deckiin — asetetaan viimeisellä sivulla.")
         _haw, ha_cb = _device_row("🏠", "Käytän Home Assistantia",
             "Kytke kotiautomaatio soundboard-nappeihin — asetetaan viimeisellä sivulla.")
+        _sow, sonos_cb = _device_row("🔊", "Minulla on Sonos-kaiuttimia",
+            "Kaiuttimien haku, ryhmitys ja äänenvoimakkuus — oma välilehti pääikkunassa.")
 
         bl.addWidget(_gw)
         bl.addWidget(_mw)
         bl.addWidget(_sw)
         bl.addWidget(_haw)
+        bl.addWidget(_sow)
 
         sep1 = QFrame()
         sep1.setFrameShape(QFrame.Shape.HLine)
@@ -9967,6 +10462,7 @@ class SetupWizard(QDialog):
             self._svc_mixer = mixer
             self._svc_streamdeck = sd_cb.isChecked()
             self._svc_ha = ha_cb.isChecked()
+            self._svc_sonos = sonos_cb.isChecked()
             # Listaa vain se mitä OIKEASTI puuttuu tältä koneelta — jo asennettua
             # (ffmpeg/Voicemeeter/VB-Cable) ei pelotella "tarvitaan vielä" -rivillä.
             needs = []
@@ -12238,6 +12734,7 @@ class SetupWizard(QDialog):
                 settings["ha_url"] = _ha_u
             if _ha_t:
                 settings["ha_token"] = _ha_t
+        settings["sonos_enabled"] = getattr(self, "_svc_sonos", False)
         settings["_last_wizard_version"] = APP_VERSION
         save_settings(settings)
         self.accept()
