@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.97"
+APP_VERSION = "1.3.98"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -6166,7 +6166,8 @@ class App(QWidget):
 
         hint = QLabel(
             "Rasti = puheen/käännöksen TTS-kohde. Liu'ut ohjaavat kunkin kaiuttimen omaa "
-            "äänenvoimakkuutta; MASTER-liuku skaalaa kaikkia valittuja kaiuttimia suhteessa toisiinsa."
+            "äänenvoimakkuutta; MASTER-liuku skaalaa KAIKKIA listan kaiuttimia suhteessa toisiinsa "
+            "(riippumatta rasteista)."
         )
         hint.setStyleSheet(T("color:@TEXT_FAINT; font-size:11px; border:none; margin-top:4px;"))
         hint.setWordWrap(True)
@@ -6297,10 +6298,11 @@ class App(QWidget):
         save_settings(self.settings)
 
     def _sonos_master_press(self):
+        # Master governs every listed speaker — the per-row checkbox is a separate
+        # concept (TTS/speech target), not membership in the master volume group.
         self._sonos_master_baseline = {
             uid: row["vol_slider"].value()
             for uid, row in self._sonos_speaker_rows.items()
-            if row["checkbox"].isChecked()
         }
         self._sonos_master_press_val = self._sonos_master_slider.value() or 50
 
