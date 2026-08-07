@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.104"
+APP_VERSION = "1.3.105"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -2015,13 +2015,19 @@ def _sb_import_audio(src_path: str, page_index: int, slot_index: int) -> tuple[s
     return out_path, orig_size, os.path.getsize(out_path)
 
 
-def _migrate_audio_to_mp3(status_cb=None) -> tuple[int, int]:
+def _migrate_audio_to_mp3(status_cb=None, found_cb=None) -> tuple[int, int]:
     """Convert any remaining .wav soundboard/favorites files to .mp3 (see _to_mp3),
     update every reference (soundboard_pages incl. nested folder_slots, favorites
     audio_file), and delete each .wav only after its .mp3 has been written and
     verified non-empty — a failed conversion leaves the original .wav untouched.
     Safe to call on every app start / wizard run: if nothing needs converting this is
     just a fast directory-free scan of already-loaded settings, no ffmpeg calls.
+
+    found_cb(total), if given, is called once up front with the number of files that
+    will actually be converted — lets the caller show "0/N" before work starts instead
+    of the count only becoming apparent as files finish (this was the whole point of
+    the previous version's silence: it never told the user how much work there was).
+    status_cb(str), if given, is called with a progress line per file.
     Returns (converted_count, failed_count)."""
     converted = 0
     failed = 0
@@ -2033,8 +2039,44 @@ def _migrate_audio_to_mp3(status_cb=None) -> tuple[int, int]:
             except Exception:
                 pass
 
-    def _convert_one(wav_path: str):
-        nonlocal converted, failed
+    settings = load_settings()
+    history_data = load_history_data()
+
+    # Pass 1: find every .wav still referenced, so the total is known before any
+    # conversion starts (no ffmpeg calls yet — just a dict walk + os.path.exists checks).
+    jobs: list[dict] = []  # {"container": dict, "key": str, "path": str}
+
+    def _collect_slots(slots: list):
+        for slot in slots:
+            path = slot.get("file", "")
+            if path and path.lower().endswith(".wav") and os.path.exists(path):
+                jobs.append({"container": slot, "key": "file", "path": path})
+            if slot.get("folder_slots"):
+                _collect_slots(slot["folder_slots"])
+
+    for page in settings.get("soundboard_pages", []):
+        _collect_slots(page.get("slots", []))
+
+    for entry in history_data.get("favorites", []):
+        if isinstance(entry, dict):
+            path = entry.get("audio_file", "")
+            if path and path.lower().endswith(".wav") and os.path.exists(path):
+                jobs.append({"container": entry, "key": "audio_file", "path": path})
+
+    total = len(jobs)
+    if found_cb:
+        try:
+            found_cb(total)
+        except Exception:
+            pass
+    if total == 0:
+        return 0, 0
+
+    # Pass 2: actually convert, updating each reference and reporting N/total.
+    sb_changed = False
+    fav_changed = False
+    for i, job in enumerate(jobs, start=1):
+        wav_path = job["path"]
         mp3_path = os.path.splitext(wav_path)[0] + ".mp3"
         try:
             with open(wav_path, "rb") as f:
@@ -2047,50 +2089,24 @@ def _migrate_audio_to_mp3(status_cb=None) -> tuple[int, int]:
             if os.path.getsize(mp3_path) == 0:
                 raise RuntimeError("mp3 file is empty after write")
             os.remove(wav_path)
+            job["container"][job["key"]] = mp3_path
+            if job["key"] == "file":
+                sb_changed = True
+            else:
+                fav_changed = True
             converted += 1
-            _report(f"Muunnettu: {os.path.basename(wav_path)}")
-            return mp3_path
+            _report(f"Muunnetaan äänitiedostoja: {i}/{total} — {os.path.basename(wav_path)}")
         except Exception as e:
             failed += 1
-            _report(f"Muunnos epäonnistui ({os.path.basename(wav_path)}): {e}")
+            _report(f"Muunnetaan äänitiedostoja: {i}/{total} — virhe ({os.path.basename(wav_path)}): {e}")
             try:
                 if os.path.exists(mp3_path):
                     os.remove(mp3_path)
             except Exception:
                 pass
-            return None
 
-    def _migrate_slots(slots: list) -> bool:
-        changed = False
-        for slot in slots:
-            path = slot.get("file", "")
-            if path and path.lower().endswith(".wav") and os.path.exists(path):
-                new_path = _convert_one(path)
-                if new_path:
-                    slot["file"] = new_path
-                    changed = True
-            if slot.get("folder_slots") and _migrate_slots(slot["folder_slots"]):
-                changed = True
-        return changed
-
-    settings = load_settings()
-    sb_changed = False
-    for page in settings.get("soundboard_pages", []):
-        if _migrate_slots(page.get("slots", [])):
-            sb_changed = True
     if sb_changed:
         save_settings(settings)
-
-    history_data = load_history_data()
-    fav_changed = False
-    for entry in history_data.get("favorites", []):
-        if isinstance(entry, dict):
-            path = entry.get("audio_file", "")
-            if path and path.lower().endswith(".wav") and os.path.exists(path):
-                new_path = _convert_one(path)
-                if new_path:
-                    entry["audio_file"] = new_path
-                    fav_changed = True
     if fav_changed:
         save_history_data(history_data)
 
@@ -12519,7 +12535,9 @@ class SetupWizard(QDialog):
         bl.addWidget(summary)
 
         # ── Äänitiedostot MP3:ksi — ajetaan aina (myös versiopäivitysten update-
-        #    wizardissa), mutta on nopea no-op jos mitään ei ole enää muunnettavana ──
+        #    wizardissa). "Valmis"-nappi pysyy lukittuna kunnes tämä on oikeasti
+        #    valmis, jotta muunnos ei jää huomaamatta taustalle (aiempi versio
+        #    näytti vain hiljaisen labelin eikä estänyt sulkemista kesken kaiken). ──
         _audio_w = QWidget()
         _audio_w.setStyleSheet(
             "QWidget { background: #0a0f1e; border: 1px solid #1c2c52; border-radius: 8px; }"
@@ -12538,6 +12556,12 @@ class SetupWizard(QDialog):
             "color: #b9c5e6; font-size: 12px; background: transparent; border: none;"
         )
         _audio_bl.addWidget(self._fin_audio_status)
+        self._fin_audio_bar = QProgressBar()
+        self._fin_audio_bar.setRange(0, 0)  # indeterminate until _found gives a real total
+        self._fin_audio_bar.setFixedHeight(8)
+        self._fin_audio_bar.setTextVisible(False)
+        self._fin_audio_bar.setStyleSheet(self._BAR_IDLE)
+        _audio_bl.addWidget(self._fin_audio_bar)
         bl.addWidget(_audio_w)
 
         import queue as _q_audio
@@ -12546,7 +12570,8 @@ class SetupWizard(QDialog):
         def _bg_migrate():
             try:
                 converted, failed = _migrate_audio_to_mp3(
-                    status_cb=lambda msg: _rq_audio.put(("progress", msg))
+                    found_cb=lambda total: _rq_audio.put(("found", total)),
+                    status_cb=lambda msg: _rq_audio.put(("progress", msg)),
                 )
                 _rq_audio.put(("done", (converted, failed)))
             except Exception as e:
@@ -12557,21 +12582,46 @@ class SetupWizard(QDialog):
                 kind, payload = _rq_audio.get_nowait()
             except Exception:
                 return
-            if kind == "progress":
+            if kind == "found":
+                total = payload
+                if total == 0:
+                    self._fin_audio_status.setText("Kaikki äänitiedostot ovat jo MP3-muodossa.")
+                    self._fin_audio_bar.setRange(0, 1)
+                    self._fin_audio_bar.setValue(1)
+                else:
+                    self._fin_audio_status.setText(
+                        f"Muunnetaan {total} äänitiedostoa MP3:ksi — kestää muutamasta "
+                        f"sekunnista pariin minuuttiin tiedostojen määrästä riippuen…"
+                    )
+                    self._fin_audio_bar.setRange(0, total)
+                    self._fin_audio_bar.setValue(0)
+            elif kind == "progress":
                 self._fin_audio_status.setText(payload)
+                try:
+                    n = int(payload.split(":")[1].strip().split("/")[0].strip())
+                    self._fin_audio_bar.setValue(n)
+                except Exception:
+                    pass
             elif kind == "done":
                 converted, failed = payload
                 _timer_audio.stop()
+                self._fin_audio_bar.setRange(0, 1)
+                self._fin_audio_bar.setValue(1)
+                self._fin_audio_bar.setStyleSheet(self._BAR_ACTIVE)
                 if converted == 0 and failed == 0:
                     self._fin_audio_status.setText("Kaikki äänitiedostot ovat jo MP3-muodossa.")
                 else:
-                    msg = f"{converted} tiedostoa muunnettu MP3:ksi."
+                    msg = f"Valmis — {converted} tiedostoa muunnettu MP3:ksi."
                     if failed:
                         msg += f" {failed} epäonnistui (alkuperäinen WAV säilytetty)."
                     self._fin_audio_status.setText(msg)
+                fin.setEnabled(True)
+                fin.setText("Valmis  ✓")
             elif kind == "error":
                 _timer_audio.stop()
                 self._fin_audio_status.setText(f"Äänitiedostojen tarkistus epäonnistui: {payload}")
+                fin.setEnabled(True)
+                fin.setText("Valmis  ✓")
 
         _timer_audio = QTimer(self)
         _timer_audio.timeout.connect(_poll_audio)
@@ -12753,7 +12803,8 @@ class SetupWizard(QDialog):
         nav = QHBoxLayout()
         nav.addWidget(self._back_btn())
         nav.addStretch()
-        fin = QPushButton("Valmis  ✓")
+        fin = QPushButton("Tarkistetaan ääniä…")
+        fin.setEnabled(False)  # re-enabled by _poll_audio once the MP3 migration finishes
         fin.setFixedHeight(42)
         fin.setMinimumWidth(140)
         fin.setStyleSheet(self._BTN_PRIMARY)
