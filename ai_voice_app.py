@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.100"
+APP_VERSION = "1.3.101"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -2477,13 +2477,13 @@ class SoundboardButton(QWidget):
             menu.addAction(ha_label, self._assign_ha_players)
             _app_ref = self._find_app()
             if _app_ref and _app_ref.settings.get("sonos_enabled", False):
-                sonos_label = ("Sonos-kaiuttimet… (aktiivinen)" if self._data.get("sonos_speakers")
-                              else "Sonos-kaiuttimet…")
-                menu.addAction(sonos_label, self._assign_sonos_speakers)
+                sonos_label = ("Poista Sonos-välilehdeltä" if self._data.get("sonos_shortcut")
+                              else "Lisää Sonos-välilehdelle")
+                menu.addAction(sonos_label, self._toggle_sonos_shortcut)
         _name = self._data.get("name", "")
         has_content = bool(self._data.get("file") or self._data.get("image")
                           or self._data.get("link_page_name") or self._data.get("subfolder")
-                          or self._data.get("ha_players") or self._data.get("sonos_speakers")
+                          or self._data.get("ha_players") or self._data.get("sonos_shortcut")
                           or (_name and not _name.startswith("Slot ")))
         if has_content:
             menu.addSeparator()
@@ -2499,70 +2499,20 @@ class SoundboardButton(QWidget):
             p = p.parent()
         return None
 
-    def _assign_sonos_speakers(self):
-        """Open dialog to assign Sonos speaker targets to this soundboard slot."""
+    def _toggle_sonos_shortcut(self):
+        """Add/remove this slot's icon from the Sonos tab's shortcut grid. No speaker
+        picking here — that happens on the Sonos tab itself when the shortcut icon is
+        clicked (SonosManager targets are chosen per-play there, not at assignment time)."""
         app = self._find_app()
         if not app or not app.settings.get("sonos_enabled", False):
             return
-        # Prefer the live discovery cache; fall back to last-known names so the
-        # dialog still works if the user hasn't pressed "Hae kaiuttimet" this session.
-        speakers = list(getattr(app, "_sonos_speakers", []) or [])
-        if not speakers:
-            speakers = [{"uid": uid, "name": name}
-                       for uid, name in app.settings.get("sonos_speaker_names", {}).items()]
-        if not speakers:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(
-                self, "Ei Sonos-kaiuttimia",
-                "Hae ensin kaiuttimet Sonos-välilehdeltä pääikkunassa."
-            )
-            return
-
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QDialogButtonBox, QCheckBox, QLabel
-        dlg = QDialog(self)
-        dlg.setWindowTitle(f"Sonos-kaiuttimet — {self._data.get('name', 'Slot')}")
-        dlg.resize(380, 300)
-        dlg.setStyleSheet(
-            "QDialog { background: #05070f; color: #b9c5e6; }"
-            "QCheckBox { color: #b9c5e6; font-size: 13px; padding: 4px; }"
-            "QPushButton { background: #101a36; border: 1px solid #1c2c52; border-radius: 5px;"
-            " color: #b9c5e6; padding: 6px 16px; font-size: 12px; }"
-            "QPushButton:hover { background: #6aa8ff; border-color: #6aa8ff; }"
-            "QLabel { color: #8a9bc4; font-size: 11px; }"
-        )
-        vbox = QVBoxLayout(dlg)
-        vbox.setContentsMargins(16, 12, 16, 12)
-        vbox.setSpacing(6)
-        lbl = QLabel("Valitse Sonos-kaiuttimet joille ääni lähetetään:")
-        lbl.setStyleSheet("color: #b9c5e6; font-size: 12px; font-weight: 600; padding-bottom: 4px;")
-        vbox.addWidget(lbl)
-
-        current_speakers = set(self._data.get("sonos_speakers", []))
-        checkboxes = []
-        for sp in speakers:
-            uid = sp.get("uid", "")
-            name = sp.get("name", "") or uid
-            cb = QCheckBox(name)
-            cb.setChecked(uid in current_speakers)
-            cb.setProperty("uid", uid)
-            vbox.addWidget(cb)
-            checkboxes.append(cb)
-
-        vbox.addStretch()
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btns.accepted.connect(dlg.accept)
-        btns.rejected.connect(dlg.reject)
-        vbox.addWidget(btns)
-
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            selected = [cb.property("uid") for cb in checkboxes if cb.isChecked()]
-            self._data["sonos_speakers"] = selected
-            self._refresh()
-            self.data_changed.emit(self.slot_index)
-            # data_changed -> _sb_data_handler persists soundboard_pages, but the Sonos
-            # tab's shortcut grid is a separate widget that needs an explicit rebuild.
-            if hasattr(app, "_sonos_refresh_soundboard_shortcuts"):
-                app._sonos_refresh_soundboard_shortcuts()
+        self._data["sonos_shortcut"] = not self._data.get("sonos_shortcut", False)
+        self._refresh()
+        self.data_changed.emit(self.slot_index)
+        # data_changed -> _sb_data_handler persists soundboard_pages, but the Sonos
+        # tab's shortcut grid is a separate widget that needs an explicit rebuild.
+        if hasattr(app, "_sonos_refresh_soundboard_shortcuts"):
+            app._sonos_refresh_soundboard_shortcuts()
 
     def _assign_ha_players(self):
         """Open dialog to assign HA media_player entities to this soundboard slot."""
@@ -5146,7 +5096,16 @@ class App(QWidget):
         self._bottom_tabs.addTab(self._build_soundboard_card(), "  Soundboard  ")
         self._bottom_tabs.addTab(self._build_voice_fx_card(), "  Voice FX  ")
         if self.settings.get("sonos_enabled", False):
-            self._bottom_tabs.addTab(self._build_sonos_card(), "  Sonos  ")
+            # Wrapped in its own scroll area — the card's content (speaker list +
+            # soundboard shortcuts) can exceed the fixed-size window's bottom-tab
+            # area, and without this the layout compresses/overlaps instead of
+            # scrolling (this broke the speaker volume section when the shortcuts
+            # section was added).
+            _sonos_scroll = QScrollArea()
+            _sonos_scroll.setWidgetResizable(True)
+            _sonos_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+            _sonos_scroll.setWidget(self._build_sonos_card())
+            self._bottom_tabs.addTab(_sonos_scroll, "  Sonos  ")
         # Output devices and input mic moved to Settings → Asennus.
         # Build the card to keep _device_rows_layout and input_device_combo alive,
         # but do not add it as a visible tab.
@@ -6202,7 +6161,7 @@ class App(QWidget):
 
         self._sonos_list_scroll = QScrollArea()
         self._sonos_list_scroll.setWidgetResizable(True)
-        self._sonos_list_scroll.setFixedHeight(160)
+        self._sonos_list_scroll.setFixedHeight(130)
         self._sonos_list_scroll.setStyleSheet(T(
             "QScrollArea { background:@BG_DEEP; border:1px solid @BORDER; border-radius:6px; }"))
         self._sonos_list_container = QWidget()
@@ -6243,7 +6202,7 @@ class App(QWidget):
 
         self._sonos_shortcuts_scroll = QScrollArea()
         self._sonos_shortcuts_scroll.setWidgetResizable(True)
-        self._sonos_shortcuts_scroll.setFixedHeight(90)
+        self._sonos_shortcuts_scroll.setFixedHeight(76)
         self._sonos_shortcuts_scroll.setStyleSheet(T(
             "QScrollArea { background:@BG_DEEP; border:1px solid @BORDER; border-radius:6px; }"))
         self._sonos_shortcuts_container = QWidget()
@@ -6273,10 +6232,11 @@ class App(QWidget):
         return frame
 
     def _sonos_refresh_soundboard_shortcuts(self):
-        """Show a clickable icon for every soundboard slot that has Sonos speakers
-        assigned (via the slot's right-click → "Sonos-kaiuttimet…" editor), so those
-        clips can be triggered straight from the Sonos tab. Re-run this whenever a
-        slot's Sonos assignment changes (see SoundboardButton._assign_sonos_speakers)."""
+        """Show a clickable icon for every soundboard slot added to the Sonos tab
+        (via the slot's right-click → "Lisää Sonos-välilehdelle" toggle), so those
+        clips can be triggered straight from here. No speaker is picked at that
+        toggle step — clicking the icon here is what asks which speaker to play to
+        (see _sonos_pick_speaker_and_play). Re-run whenever a slot's toggle changes."""
         if not hasattr(self, "_sonos_shortcuts_layout"):
             return
         while self._sonos_shortcuts_layout.count():
@@ -6288,13 +6248,13 @@ class App(QWidget):
         matches = []
         for page_idx, page in enumerate(self.settings.get("soundboard_pages", []) or []):
             for slot_idx, slot in enumerate(page.get("slots", []) or []):
-                if slot.get("sonos_speakers") and slot.get("file"):
+                if slot.get("sonos_shortcut") and slot.get("file"):
                     matches.append((page_idx, slot_idx, slot))
 
         if not matches:
             empty_lbl = QLabel(
-                "Ei Sonos-kohdistettuja klippejä. Oikeaklikkaa soundboard-nappia "
-                "(Muokkaa-tila) → \"Sonos-kaiuttimet…\"."
+                "Ei Sonos-välilehdelle lisättyjä klippejä. Oikeaklikkaa soundboard-nappia "
+                "(Muokkaa-tila) → \"Lisää Sonos-välilehdelle\"."
             )
             empty_lbl.setWordWrap(True)
             empty_lbl.setStyleSheet(T("color:@TEXT_FAINT; font-size:11px; border:none;"))
@@ -6376,6 +6336,9 @@ class App(QWidget):
             selected = [cb.property("uid") for cb in checkboxes if cb.isChecked()]
             if not selected:
                 return
+            # Remember the pick so the next click of this icon pre-checks the same speakers.
+            slot["sonos_speakers"] = selected
+            save_settings(self.settings)
             local_ip = _get_local_ip()
             audio_url = (f"http://{local_ip}:{StreamDeckHttpServer.PORT}"
                          f"/soundboard/audio/{page_idx}/{slot_idx}")
