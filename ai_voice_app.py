@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.102"
+APP_VERSION = "1.3.103"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -1627,12 +1627,15 @@ class StreamDeckHttpServer:
                     self._cors()
                     self.end_headers()
                     self.wfile.write(body)
-                elif self.path == "/sonos/tts_current.wav":
-                    # Serve the most recently generated TTS/favorite WAV for Sonos play_uri()
-                    body = getattr(app, "_sonos_tts_cache", None)
+                elif self.path == "/sonos/audio_cache.mp3":
+                    # Serve the most recently prepared audio (TTS/favorite/soundboard) for
+                    # Sonos play_uri() — always MP3: WAV served to Sonos is unreliable in
+                    # practice (community-confirmed — gets stuck in TRANSITIONING and never
+                    # even fetches the URL), MP3 works reliably. See _to_sonos_mp3().
+                    body = getattr(app, "_sonos_audio_cache", None)
                     if body:
                         self.send_response(200)
-                        self.send_header("Content-Type", "audio/wav")
+                        self.send_header("Content-Type", "audio/mpeg")
                         self.send_header("Content-Length", str(len(body)))
                         self._cors()
                         self.end_headers()
@@ -1792,16 +1795,43 @@ class SonosManager:
             coords[coord.uid] = coord
         return list(coords.values()), missing
 
-    def play_uri(self, uids: list[str], url: str, title: str = "One Voice Royale") -> list[str]:
-        """Returns the uids that could not be reached (caller should surface this —
-        a target the app can't resolve should never fail silently)."""
+    @staticmethod
+    def _didl_for(url: str, title: str, mime: str) -> str:
+        """Build minimal DIDL-Lite metadata declaring the MIME type explicitly.
+
+        Our audio URLs (e.g. /soundboard/audio/0/0) have no file extension, so Sonos
+        cannot sniff the content type from the URL alone and rejects play_uri() with
+        "UPnP Error 714: Illegal MIME-Type" without this — confirmed against a real
+        speaker. escape() on title/url guards against XML-breaking characters (e.g.
+        soundboard clip names with & or <)."""
+        import xml.sax.saxutils as _sax
+        return (
+            '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" '
+            'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+            'xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">'
+            '<item id="1" parentID="0" restricted="1">'
+            f'<dc:title>{_sax.escape(title)}</dc:title>'
+            '<upnp:class>object.item.audioItem.musicTrack</upnp:class>'
+            f'<res protocolInfo="http-get:*:{mime}:*">{_sax.escape(url)}</res>'
+            '</item></DIDL-Lite>'
+        )
+
+    def play_uri(self, uids: list[str], url: str, title: str = "One Voice Royale",
+                 mime: str = "audio/wav") -> tuple[list[str], list[str]]:
+        """Returns (missing_uids, error_messages) — a target that can't be resolved or
+        whose play_uri() call raises must never fail silently (this codebase's earlier
+        `except Exception: pass` here hid a real, reproducible "UPnP Error 714: Illegal
+        MIME-Type" from every caller, which is why TTS/soundboard pushes appeared to do
+        nothing at all)."""
         coords, missing = self._coordinators_for(uids)
+        meta = self._didl_for(url, title, mime)
+        errors = []
         for coord in coords:
             try:
-                coord.play_uri(url, title=title)
-            except Exception:
-                pass
-        return missing
+                coord.play_uri(url, meta=meta, title=title)
+            except Exception as e:
+                errors.append(f"{coord.player_name}: {e}")
+        return missing, errors
 
     def stop(self, uids: list[str]) -> list[str]:
         coords, missing = self._coordinators_for(uids)
@@ -1827,6 +1857,36 @@ def _get_local_ip() -> str:
         return ip
     except Exception:
         return "127.0.0.1"
+
+
+def _to_sonos_mp3(data: bytes) -> bytes:
+    """Transcode arbitrary audio bytes (WAV, MP3, OGG, FLAC — ffmpeg auto-detects the
+    input) to MP3 for Sonos playback. Confirmed against a real speaker: WAV served
+    directly to Sonos via play_uri() is unreliable — it gets stuck in TRANSITIONING
+    and never even issues an HTTP request for the URL, a known SoCo/Sonos community
+    issue — while MP3 plays reliably. Raises RuntimeError on failure (caller decides
+    how to surface that instead of silently producing empty/garbage audio)."""
+    with tempfile.NamedTemporaryFile(suffix=".src", delete=False) as src_tmp:
+        src_path = src_tmp.name
+        src_tmp.write(data)
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as dst_tmp:
+        dst_path = dst_tmp.name
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", src_path, "-codec:a", "libmp3lame", "-qscale:a", "4", dst_path],
+            capture_output=True, text=True,
+            creationflags=(subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0),
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg failed to transcode audio for Sonos: {result.stderr.strip()}")
+        with open(dst_path, "rb") as f:
+            return f.read()
+    finally:
+        for p in (src_path, dst_path):
+            try:
+                os.remove(p)
+            except Exception:
+                pass
 
 
 def _make_test_beep_wav() -> bytes:
@@ -5088,7 +5148,7 @@ class App(QWidget):
         # scan runs this session) can be reached right away instead of needing to wait
         # for the background discover() to finish.
         self._sonos.ip_hints = dict(self.settings.get("sonos_speaker_ips", {}))
-        self._sonos_tts_cache: bytes | None = None
+        self._sonos_audio_cache: bytes | None = None  # always MP3 — see _to_sonos_mp3()
         self._sonos_speakers: list[dict] = []  # last discovery result — {uid,name,ip,volume,coordinator_uid}
 
         # ============ Bottom tab widget: Outputs / Soundboard / Voice FX ============
@@ -6299,13 +6359,13 @@ class App(QWidget):
             return
         slot = slots[slot_idx]
 
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QDialogButtonBox, QCheckBox, QLabel
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QDialogButtonBox, QRadioButton, QLabel
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Valitse Sonos-kaiutin — {slot.get('name', 'Slot')}")
         dlg.resize(320, 260)
         dlg.setStyleSheet(
             "QDialog { background: #05070f; color: #b9c5e6; }"
-            "QCheckBox { color: #b9c5e6; font-size: 13px; padding: 4px; }"
+            "QRadioButton { color: #b9c5e6; font-size: 13px; padding: 4px; }"
             "QPushButton { background: #101a36; border: 1px solid #1c2c52; border-radius: 5px;"
             " color: #b9c5e6; padding: 6px 16px; font-size: 12px; }"
             "QPushButton:hover { background: #6aa8ff; border-color: #6aa8ff; }"
@@ -6317,15 +6377,16 @@ class App(QWidget):
         lbl.setStyleSheet("color: #b9c5e6; font-size: 12px; font-weight: 600; padding-bottom: 4px;")
         vbox.addWidget(lbl)
 
+        # Single speaker only — a soundboard clip plays to exactly one target per press.
         saved_uids = set(slot.get("sonos_speakers", []))
-        checkboxes = []
-        for sp in self._sonos_speakers:
+        radios = []
+        for i, sp in enumerate(self._sonos_speakers):
             uid = sp.get("uid", "")
-            cb = QCheckBox(sp.get("name", "") or uid)
-            cb.setChecked(uid in saved_uids)
-            cb.setProperty("uid", uid)
-            vbox.addWidget(cb)
-            checkboxes.append(cb)
+            rb = QRadioButton(sp.get("name", "") or uid)
+            rb.setChecked(uid in saved_uids or (i == 0 and not saved_uids))
+            rb.setProperty("uid", uid)
+            vbox.addWidget(rb)
+            radios.append(rb)
 
         vbox.addStretch()
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -6334,16 +6395,13 @@ class App(QWidget):
         vbox.addWidget(btns)
 
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            selected = [cb.property("uid") for cb in checkboxes if cb.isChecked()]
-            if not selected:
+            chosen = next((rb.property("uid") for rb in radios if rb.isChecked()), None)
+            if not chosen:
                 return
-            # Remember the pick so the next click of this icon pre-checks the same speakers.
-            slot["sonos_speakers"] = selected
+            # Remember the pick so the next click of this icon pre-selects the same speaker.
+            slot["sonos_speakers"] = [chosen]
             save_settings(self.settings)
-            local_ip = _get_local_ip()
-            audio_url = (f"http://{local_ip}:{StreamDeckHttpServer.PORT}"
-                         f"/soundboard/audio/{page_idx}/{slot_idx}")
-            self._push_to_sonos(selected, audio_url)
+            self._push_soundboard_file_to_sonos([chosen], slot.get("file", ""))
 
     def _sonos_discover(self):
         self._sonos_discover_btn.setEnabled(False)
@@ -7114,10 +7172,10 @@ class App(QWidget):
                 wav_bytes = f.read()
             sonos_targets = self.settings.get("sonos_speech_targets", []) if self.settings.get("sonos_enabled", False) else []
             if sonos_targets:
-                self._sonos_tts_cache = wav_bytes
+                self._sonos_audio_cache = _to_sonos_mp3(wav_bytes)
                 _local_ip = _get_local_ip()
-                sonos_url = f"http://{_local_ip}:{StreamDeckHttpServer.PORT}/sonos/tts_current.wav"
-                self._push_to_sonos(sonos_targets, sonos_url)
+                sonos_url = f"http://{_local_ip}:{StreamDeckHttpServer.PORT}/sonos/audio_cache.mp3"
+                self._push_to_sonos(sonos_targets, sonos_url, mime="audio/mpeg")
             play_wav_bytes(
                 wav_bytes,
                 device_indices=self.get_selected_devices(),
@@ -7836,7 +7894,7 @@ class App(QWidget):
 
     # ============ Sonos ============
 
-    def _push_to_sonos(self, uids: list, audio_url: str) -> None:
+    def _push_to_sonos(self, uids: list, audio_url: str, mime: str = "audio/mpeg") -> None:
         """Push a servable audio URL to the given Sonos speaker uids. Always runs the
         blocking soco play_uri() call off the Qt main thread, per the codebase's
         thread-safety rule (no direct blocking network I/O on the UI thread)."""
@@ -7845,13 +7903,44 @@ class App(QWidget):
 
         def _run():
             try:
-                missing = self._sonos.play_uri(uids, audio_url)
+                missing, errors = self._sonos.play_uri(uids, audio_url, mime=mime)
                 if missing:
                     names = self.settings.get("sonos_speaker_names", {})
                     missing_names = ", ".join(names.get(u, u) for u in missing)
                     self.append_status(
                         f"Sonos: ei tavoitettu — {missing_names} (paina Hae kaiuttimet)"
                     )
+                if errors:
+                    self.append_status("Sonos-virhe: " + "; ".join(errors))
+            except Exception as e:
+                self.append_status(f"Sonos-virhe: {e}")
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _push_soundboard_file_to_sonos(self, uids: list, file_path: str) -> None:
+        """Read a soundboard clip from disk, transcode to MP3 for Sonos (see
+        _to_sonos_mp3), cache it, and push it. Runs entirely off the Qt main thread —
+        called from both a dialog Accept handler and a button click, neither of which
+        may block on ffmpeg/network I/O."""
+        if not uids or not self.settings.get("sonos_enabled", False):
+            return
+
+        def _run():
+            try:
+                with open(file_path, "rb") as f:
+                    raw = f.read()
+                self._sonos_audio_cache = _to_sonos_mp3(raw)
+                local_ip = _get_local_ip()
+                audio_url = f"http://{local_ip}:{StreamDeckHttpServer.PORT}/sonos/audio_cache.mp3"
+                missing, errors = self._sonos.play_uri(uids, audio_url, mime="audio/mpeg")
+                if missing:
+                    names = self.settings.get("sonos_speaker_names", {})
+                    missing_names = ", ".join(names.get(u, u) for u in missing)
+                    self.append_status(
+                        f"Sonos: ei tavoitettu — {missing_names} (paina Hae kaiuttimet)"
+                    )
+                if errors:
+                    self.append_status("Sonos-virhe: " + "; ".join(errors))
             except Exception as e:
                 self.append_status(f"Sonos-virhe: {e}")
 
@@ -7884,10 +7973,7 @@ class App(QWidget):
         if sonos_uids:
             sonos_path = data.get("file", "")
             if sonos_path and os.path.exists(sonos_path):
-                _local_ip = _get_local_ip()
-                sonos_audio_url = (f"http://{_local_ip}:{StreamDeckHttpServer.PORT}"
-                                    f"/soundboard/audio/{page_index}/{slot_index}")
-                self._push_to_sonos(sonos_uids, sonos_audio_url)
+                self._push_soundboard_file_to_sonos(sonos_uids, sonos_path)
             else:
                 self.append_status(f"Sonos Soundboard p{page_index+1} slot {slot_index+1}: ei ääntä (oikeaklikkaa)")
 
@@ -8522,10 +8608,10 @@ class App(QWidget):
 
             sonos_targets = self.settings.get("sonos_speech_targets", []) if self.settings.get("sonos_enabled", False) else []
             if sonos_targets:
-                self._sonos_tts_cache = wav_bytes
+                self._sonos_audio_cache = _to_sonos_mp3(wav_bytes)
                 _local_ip = _get_local_ip()
-                sonos_url = f"http://{_local_ip}:{StreamDeckHttpServer.PORT}/sonos/tts_current.wav"
-                self._push_to_sonos(sonos_targets, sonos_url)
+                sonos_url = f"http://{_local_ip}:{StreamDeckHttpServer.PORT}/sonos/audio_cache.mp3"
+                self._push_to_sonos(sonos_targets, sonos_url, mime="audio/mpeg")
 
             self.add_to_history(text)
             selected_devices = self.get_selected_devices()

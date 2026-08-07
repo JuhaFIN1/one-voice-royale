@@ -1,7 +1,7 @@
 [Setup]
 AppId={{F3A7C2E1-9B4D-4F8A-BC23-1E5D7A9F0C42}
 AppName=One Voice Royale
-AppVersion=1.3.102
+AppVersion=1.3.103
 AppPublisher=BluexDEV Softwares
 AppPublisherURL=https://github.com/JuhaFIN1/one-voice-royale
 AppSupportURL=https://github.com/JuhaFIN1/one-voice-royale/issues
@@ -9,7 +9,7 @@ DefaultDirName={autopf}\One Voice Royale
 DefaultGroupName=One Voice Royale
 AllowNoIcons=yes
 OutputDir=installer_output
-OutputBaseFilename=One_Voice_Royale_Setup_1.3.102
+OutputBaseFilename=One_Voice_Royale_Setup_1.3.103
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -54,7 +54,17 @@ Name: "{commondesktop}\One Voice Royale"; Filename: "{app}\One Voice Royale.exe"
 [Run]
 ; Rebuild Windows icon cache so the new shortcut icon appears immediately
 Filename: "{cmd}"; Parameters: "/c ie4uinit.exe -show"; Flags: runhidden waituntilidle
+; Allow inbound LAN connections to the app's local HTTP server (port 17842). Everything
+; that used it before (Stream Deck plugin, Home Assistant push) went through 127.0.0.1,
+; which bypasses Windows Firewall entirely — Sonos is the first feature where an actual
+; external LAN device (the speaker) must connect in to fetch audio, and without this rule
+; Windows Firewall silently drops those connections (confirmed: play_uri() gets accepted
+; by the speaker but it never even issues the HTTP request, stalls ~10s, then gives up).
+Filename: "netsh.exe"; Parameters: "advfirewall firewall add rule name=""One Voice Royale"" dir=in action=allow program=""{app}\One Voice Royale.exe"" enable=yes profile=private"; Flags: runhidden
 Filename: "{app}\One Voice Royale.exe"; Description: "Launch One Voice Royale"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "netsh.exe"; Parameters: "advfirewall firewall delete rule name=""One Voice Royale"""; Flags: runhidden
 
 [Messages]
 WelcomeLabel2=This will install One Voice Royale on your computer.%n%nThe app includes a first-run setup wizard that guides you through%nconfiguring your OpenAI API key and audio devices.%n%nClick Next to continue.
