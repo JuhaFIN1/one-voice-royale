@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.105"
+APP_VERSION = "1.3.106"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -2013,6 +2013,35 @@ def _sb_import_audio(src_path: str, page_index: int, slot_index: int) -> tuple[s
         f.write(_to_mp3(wav_buf.getvalue()))
 
     return out_path, orig_size, os.path.getsize(out_path)
+
+
+def _count_pending_wav_files() -> int:
+    """Fast pre-check for the wizard: how many .wav soundboard/favorites files still
+    need converting, without doing any conversion work (no ffmpeg calls — just a dict
+    walk + os.path.exists checks, same traversal _migrate_audio_to_mp3 uses)."""
+    count = 0
+
+    def _walk(slots: list):
+        nonlocal count
+        for slot in slots:
+            path = slot.get("file", "")
+            if path and path.lower().endswith(".wav") and os.path.exists(path):
+                count += 1
+            if slot.get("folder_slots"):
+                _walk(slot["folder_slots"])
+
+    settings = load_settings()
+    for page in settings.get("soundboard_pages", []):
+        _walk(page.get("slots", []))
+
+    history_data = load_history_data()
+    for entry in history_data.get("favorites", []):
+        if isinstance(entry, dict):
+            path = entry.get("audio_file", "")
+            if path and path.lower().endswith(".wav") and os.path.exists(path):
+                count += 1
+
+    return count
 
 
 def _migrate_audio_to_mp3(status_cb=None, found_cb=None) -> tuple[int, int]:
@@ -10440,6 +10469,9 @@ class SetupWizard(QDialog):
         # X/6" -merkkijonoja jotka menevät sekaisin kun sivupolku muuttuu.
         self._step_labels = {}
         self._header_counter = 0
+        # Checked once up front so the Welcome page can warn immediately and the page
+        # sequence can include/skip the dedicated conversion page accordingly.
+        self._wav_pending_count = _count_pending_wav_files()
         self._build_ui()
         self._stack.setCurrentIndex(0)
         self._refresh_step_label(0)
@@ -10471,7 +10503,8 @@ class SetupWizard(QDialog):
 
     # Sivuindeksit (ks. _build_ui) — lyhyt, suoraviivainen polku:
     # 0 welcome, 1 services, 2 packages (vain dev-tilassa), 3 api_key, 4 devices,
-    # 5 chat_routing (vain jos mikseri tai pelit/Discord valittu), 6 finish.
+    # 5 chat_routing (vain jos mikseri tai pelit/Discord valittu), 6 finish,
+    # 7 audio_migrate (vain jos WAV-tiedostoja löytyi käynnistyshetkellä).
     _PAGE_WELCOME = 0
     _PAGE_SERVICES = 1
     _PAGE_PACKAGES = 2
@@ -10479,6 +10512,7 @@ class SetupWizard(QDialog):
     _PAGE_DEVICES = 4
     _PAGE_CHAT_ROUTING = 5
     _PAGE_FINISH = 6
+    _PAGE_AUDIO_MIGRATE = 7
 
     def _navigate(self, page):
         coming_from = self._stack.currentIndex()
@@ -10529,7 +10563,10 @@ class SetupWizard(QDialog):
         return None
 
     def _get_page_sequence(self) -> list:
-        seq = [self._PAGE_WELCOME, self._PAGE_SERVICES]
+        seq = [self._PAGE_WELCOME]
+        if self._wav_pending_count > 0:
+            seq.append(self._PAGE_AUDIO_MIGRATE)
+        seq.append(self._PAGE_SERVICES)
         # Python-paketit asennetaan automaattisesti services-sivun "Seuraava"-napista
         # (dev-tila; exe:ssä kaikki on bundlattu) — erillistä pakettisivua ei näytetä.
         needs_api = (self._svc_stt == "openai" or
@@ -10587,6 +10624,19 @@ class SetupWizard(QDialog):
         info.setStyleSheet("color: #b9c5e6; font-size: 17px; background: transparent; line-height: 1.6;")
         info.setWordWrap(True)
         bl.addWidget(info)
+
+        if self._wav_pending_count > 0:
+            warn = QLabel(
+                f"⚠  {self._wav_pending_count} äänitiedostoa on vielä WAV-muodossa — "
+                f"ne muunnetaan MP3:ksi seuraavalla sivulla."
+            )
+            warn.setStyleSheet(
+                "color: #ff4444; font-size: 13px; font-weight: bold; background: transparent;"
+                " border: 1px solid #6B0000; border-radius: 6px; padding: 10px; margin-top: 8px;"
+            )
+            warn.setWordWrap(True)
+            bl.addWidget(warn)
+
         bl.addStretch()
         row = QHBoxLayout()
         row.addStretch()
@@ -10594,10 +10644,139 @@ class SetupWizard(QDialog):
         btn.setFixedHeight(42)
         btn.setMinimumWidth(140)
         btn.setStyleSheet(self._BTN_PRIMARY)
-        btn.clicked.connect(lambda: self._navigate(1))
+        _next_page = self._PAGE_AUDIO_MIGRATE if self._wav_pending_count > 0 else self._PAGE_SERVICES
+        btn.clicked.connect(lambda: self._navigate(_next_page))
         row.addWidget(btn)
         bl.addLayout(row)
         lay.addWidget(body)
+        return page
+
+    def _page_audio_migrate(self):
+        """Dedicated wizard page — only in the sequence when _wav_pending_count > 0
+        (see _get_page_sequence). Requires the user to explicitly start the MP3
+        conversion and blocks "Seuraava" until it finishes; unlike burying this in the
+        final page (the previous approach), a user with pending WAV files sees this
+        immediately as page 2, right after being warned about it on Welcome."""
+        page = QWidget()
+        page.setStyleSheet("background: #05070f;")
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addWidget(self._header(
+            "Äänitiedostot MP3:ksi",
+            f"{self._wav_pending_count} soundboard-/suosikkiäänitiedostoa muunnetaan WAV:ista MP3:ksi."
+        ))
+        body = QWidget()
+        body.setStyleSheet("background: #05070f;")
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(32, 24, 32, 20)
+        bl.setSpacing(14)
+
+        desc = QLabel(
+            f"Löysimme {self._wav_pending_count} äänitiedostoa jotka ovat vielä vanhassa "
+            "WAV-muodossa. MP3 on pienempi ja sitä käytetään nyt kaikkialla sovelluksessa "
+            "(soundboard, suosikit, Sonos). Muunnos säilyttää äänenlaadun eikä vaikuta "
+            "sisältöön — vain tiedostomuoto vaihtuu. Alkuperäistä WAV-tiedostoa ei "
+            "poisteta ennen kuin MP3-versio on varmasti kirjoitettu onnistuneesti."
+        )
+        desc.setStyleSheet("color: #b9c5e6; font-size: 14px; background: transparent; line-height: 1.5;")
+        desc.setWordWrap(True)
+        bl.addWidget(desc)
+
+        start_btn = QPushButton("▶  Aloita muuntaminen")
+        start_btn.setFixedHeight(40)
+        start_btn.setStyleSheet(self._BTN_PRIMARY)
+        bl.addWidget(start_btn)
+
+        status_lbl = QLabel("Ei vielä aloitettu.")
+        status_lbl.setWordWrap(True)
+        status_lbl.setStyleSheet("color: #b9c5e6; font-size: 12px; background: transparent; margin-top: 6px;")
+        bl.addWidget(status_lbl)
+
+        bar = QProgressBar()
+        bar.setRange(0, self._wav_pending_count or 1)
+        bar.setValue(0)
+        bar.setFixedHeight(10)
+        bar.setStyleSheet(self._BAR_IDLE)
+        bl.addWidget(bar)
+
+        bl.addStretch()
+        nav = QHBoxLayout()
+        nav.addWidget(self._back_btn())
+        nav.addStretch()
+        next_btn = QPushButton("Seuraava  →")
+        next_btn.setFixedHeight(42)
+        next_btn.setMinimumWidth(140)
+        next_btn.setStyleSheet(self._BTN_PRIMARY)
+        next_btn.setEnabled(False)
+        next_btn.clicked.connect(self._nav_next)
+        nav.addWidget(next_btn)
+        bl.addLayout(nav)
+        lay.addWidget(body)
+
+        import queue as _q_am
+        _rq_am = _q_am.Queue()
+
+        def _bg_migrate():
+            try:
+                converted, failed = _migrate_audio_to_mp3(
+                    found_cb=lambda total: _rq_am.put(("found", total)),
+                    status_cb=lambda msg: _rq_am.put(("progress", msg)),
+                )
+                _rq_am.put(("done", (converted, failed)))
+            except Exception as e:
+                _rq_am.put(("error", str(e)))
+
+        def _poll_am():
+            try:
+                kind, payload = _rq_am.get_nowait()
+            except Exception:
+                return
+            if kind == "found":
+                total = payload
+                bar.setRange(0, max(1, total))
+                bar.setValue(0)
+                if total == 0:
+                    status_lbl.setText("Ei enää muunnettavaa — kaikki ovat jo MP3-muodossa.")
+            elif kind == "progress":
+                status_lbl.setText(payload)
+                try:
+                    n = int(payload.split(":")[1].strip().split("/")[0].strip())
+                    bar.setValue(n)
+                except Exception:
+                    pass
+            elif kind == "done":
+                converted, failed = payload
+                _timer_am.stop()
+                bar.setValue(bar.maximum())
+                bar.setStyleSheet(self._BAR_ACTIVE)
+                if converted == 0 and failed == 0:
+                    status_lbl.setText("Kaikki äänitiedostot ovat jo MP3-muodossa.")
+                else:
+                    msg = f"Valmis — {converted} tiedostoa muunnettu MP3:ksi."
+                    if failed:
+                        msg += f" {failed} epäonnistui (alkuperäinen WAV säilytetty)."
+                    status_lbl.setText(msg)
+                next_btn.setEnabled(True)
+                start_btn.setEnabled(False)
+                start_btn.setText("✓  Valmis")
+            elif kind == "error":
+                _timer_am.stop()
+                status_lbl.setText(f"Muunnos epäonnistui: {payload}")
+                next_btn.setEnabled(True)  # don't trap the user behind a hard failure
+                start_btn.setEnabled(True)
+
+        _timer_am = QTimer(self)
+        _timer_am.timeout.connect(_poll_am)
+
+        def _start_clicked():
+            start_btn.setEnabled(False)
+            status_lbl.setText("Käynnistetään…")
+            bar.setStyleSheet(self._BAR_IDLE)
+            _timer_am.start(150)
+            threading.Thread(target=_bg_migrate, daemon=True).start()
+
+        start_btn.clicked.connect(_start_clicked)
         return page
 
     def _page_services(self):
@@ -12534,100 +12713,6 @@ class SetupWizard(QDialog):
         summary.setWordWrap(True)
         bl.addWidget(summary)
 
-        # ── Äänitiedostot MP3:ksi — ajetaan aina (myös versiopäivitysten update-
-        #    wizardissa). "Valmis"-nappi pysyy lukittuna kunnes tämä on oikeasti
-        #    valmis, jotta muunnos ei jää huomaamatta taustalle (aiempi versio
-        #    näytti vain hiljaisen labelin eikä estänyt sulkemista kesken kaiken). ──
-        _audio_w = QWidget()
-        _audio_w.setStyleSheet(
-            "QWidget { background: #0a0f1e; border: 1px solid #1c2c52; border-radius: 8px; }"
-        )
-        _audio_bl = QVBoxLayout(_audio_w)
-        _audio_bl.setContentsMargins(16, 12, 16, 14)
-        _audio_bl.setSpacing(4)
-        _audio_hdr = QLabel("🎵  Äänitiedostot")
-        _audio_hdr.setStyleSheet(
-            "color: #dce6ff; font-size: 13px; font-weight: bold; background: transparent; border: none;"
-        )
-        _audio_bl.addWidget(_audio_hdr)
-        self._fin_audio_status = QLabel("Tarkistetaan äänitiedostoja…")
-        self._fin_audio_status.setWordWrap(True)
-        self._fin_audio_status.setStyleSheet(
-            "color: #b9c5e6; font-size: 12px; background: transparent; border: none;"
-        )
-        _audio_bl.addWidget(self._fin_audio_status)
-        self._fin_audio_bar = QProgressBar()
-        self._fin_audio_bar.setRange(0, 0)  # indeterminate until _found gives a real total
-        self._fin_audio_bar.setFixedHeight(8)
-        self._fin_audio_bar.setTextVisible(False)
-        self._fin_audio_bar.setStyleSheet(self._BAR_IDLE)
-        _audio_bl.addWidget(self._fin_audio_bar)
-        bl.addWidget(_audio_w)
-
-        import queue as _q_audio
-        _rq_audio = _q_audio.Queue()
-
-        def _bg_migrate():
-            try:
-                converted, failed = _migrate_audio_to_mp3(
-                    found_cb=lambda total: _rq_audio.put(("found", total)),
-                    status_cb=lambda msg: _rq_audio.put(("progress", msg)),
-                )
-                _rq_audio.put(("done", (converted, failed)))
-            except Exception as e:
-                _rq_audio.put(("error", str(e)))
-
-        def _poll_audio():
-            try:
-                kind, payload = _rq_audio.get_nowait()
-            except Exception:
-                return
-            if kind == "found":
-                total = payload
-                if total == 0:
-                    self._fin_audio_status.setText("Kaikki äänitiedostot ovat jo MP3-muodossa.")
-                    self._fin_audio_bar.setRange(0, 1)
-                    self._fin_audio_bar.setValue(1)
-                else:
-                    self._fin_audio_status.setText(
-                        f"Muunnetaan {total} äänitiedostoa MP3:ksi — kestää muutamasta "
-                        f"sekunnista pariin minuuttiin tiedostojen määrästä riippuen…"
-                    )
-                    self._fin_audio_bar.setRange(0, total)
-                    self._fin_audio_bar.setValue(0)
-            elif kind == "progress":
-                self._fin_audio_status.setText(payload)
-                try:
-                    n = int(payload.split(":")[1].strip().split("/")[0].strip())
-                    self._fin_audio_bar.setValue(n)
-                except Exception:
-                    pass
-            elif kind == "done":
-                converted, failed = payload
-                _timer_audio.stop()
-                self._fin_audio_bar.setRange(0, 1)
-                self._fin_audio_bar.setValue(1)
-                self._fin_audio_bar.setStyleSheet(self._BAR_ACTIVE)
-                if converted == 0 and failed == 0:
-                    self._fin_audio_status.setText("Kaikki äänitiedostot ovat jo MP3-muodossa.")
-                else:
-                    msg = f"Valmis — {converted} tiedostoa muunnettu MP3:ksi."
-                    if failed:
-                        msg += f" {failed} epäonnistui (alkuperäinen WAV säilytetty)."
-                    self._fin_audio_status.setText(msg)
-                fin.setEnabled(True)
-                fin.setText("Valmis  ✓")
-            elif kind == "error":
-                _timer_audio.stop()
-                self._fin_audio_status.setText(f"Äänitiedostojen tarkistus epäonnistui: {payload}")
-                fin.setEnabled(True)
-                fin.setText("Valmis  ✓")
-
-        _timer_audio = QTimer(self)
-        _timer_audio.timeout.connect(_poll_audio)
-        _timer_audio.start(150)
-        threading.Thread(target=_bg_migrate, daemon=True).start()
-
         # ── Stream Deck -osio (näkyy vain jos valittu sivulla 2) ──
         self._fin_sd_w = QWidget()
         self._fin_sd_w.setVisible(False)
@@ -12803,8 +12888,7 @@ class SetupWizard(QDialog):
         nav = QHBoxLayout()
         nav.addWidget(self._back_btn())
         nav.addStretch()
-        fin = QPushButton("Tarkistetaan ääniä…")
-        fin.setEnabled(False)  # re-enabled by _poll_audio once the MP3 migration finishes
+        fin = QPushButton("Valmis  ✓")
         fin.setFixedHeight(42)
         fin.setMinimumWidth(140)
         fin.setStyleSheet(self._BTN_PRIMARY)
@@ -13063,6 +13147,7 @@ class SetupWizard(QDialog):
         self._stack.addWidget(self._page_devices())        # 4  mikrofoni + kaiuttimet + chat-reititys + ääntesti
         self._stack.addWidget(QWidget())                   # 5  (vanha chat-reititys-sivu — nyt osio sivulla 4; placeholder säilyttää indeksit)
         self._stack.addWidget(self._page_final_test())     # 6  Valmis
+        self._stack.addWidget(self._page_audio_migrate())  # 7  WAV->MP3 (vain jos _wav_pending_count > 0)
 
     def _on_key_changed(self, text):
         valid = text.strip().startswith("sk-") and len(text.strip()) > 20
