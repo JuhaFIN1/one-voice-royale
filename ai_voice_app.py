@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.95"
+APP_VERSION = "1.3.96"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -10516,6 +10516,7 @@ class SetupWizard(QDialog):
         mixer_cb.toggled.connect(lambda *_: _update_summary())
         sd_cb.toggled.connect(lambda *_: _update_summary())
         ha_cb.toggled.connect(lambda *_: _update_summary())
+        sonos_cb.toggled.connect(lambda *_: _update_summary())
         _select_pkg(0)  # default: Ilmainen (suositeltu)
 
         # Asennuksen edistyminen — näkyviin vasta kun "Seuraava" asentaa jotain
