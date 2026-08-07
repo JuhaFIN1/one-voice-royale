@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.96"
+APP_VERSION = "1.3.97"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -6173,7 +6173,20 @@ class App(QWidget):
         layout.addWidget(hint)
 
         self._sonos_speaker_rows: dict = {}
+        # Remember previously discovered speakers across restarts — don't force the user
+        # to press "Hae kaiuttimet" again just to see/target speakers found last session.
+        if not self._sonos_speakers:
+            saved_names = self.settings.get("sonos_speaker_names", {}) or {}
+            self._sonos_speakers = [
+                {"uid": uid, "name": name, "ip": "", "volume": 50, "coordinator_uid": uid}
+                for uid, name in saved_names.items()
+            ]
         self._sonos_populate_from_cache()
+        if self._sonos_speakers:
+            self._sonos_status_lbl.setText(f"{len(self._sonos_speakers)} kaiutinta muistista — päivitetään taustalla…")
+            # Silent background refresh so volume/group controls work without a manual click
+            # (remembered entries have no live volume/coordinator info until this completes).
+            self._sonos_discover()
         return frame
 
     def _sonos_discover(self):
