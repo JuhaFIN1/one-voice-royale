@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.108"
+APP_VERSION = "1.3.109"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -8699,7 +8699,16 @@ class App(QWidget):
             self._compact.close()
         except Exception:
             pass
+        try:
+            self._tray_icon.hide()
+        except Exception:
+            pass
         super().closeEvent(event)
+        # setQuitOnLastWindowClosed(False) (needed so closing the main window normally
+        # just hides it to the tray) also means closing THIS window here never actually
+        # ends the Qt event loop / process on its own — "Sulje ohjelma" in the tray menu
+        # was hiding the window while the app kept running invisibly in the background.
+        QApplication.instance().quit()
 
     def ask_play_transcribed(self, transcribed: str):
         from PyQt6.QtWidgets import QMessageBox
@@ -10564,6 +10573,17 @@ class SetupWizard(QDialog):
         self._build_ui()
         self._stack.setCurrentIndex(0)
         self._refresh_step_label(0)
+        # Windows' focus-stealing prevention can open a freshly-launched process's first
+        # window behind other windows without giving it focus — most visible right after
+        # the installer's elevated process launches this (non-elevated) app as its final
+        # step. The wizard then technically "opens" but the user never sees it. Force it
+        # to the foreground once the event loop actually starts (exec() is what shows it).
+        QTimer.singleShot(0, self._force_to_foreground)
+
+    def _force_to_foreground(self):
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
     # ── helpers ──────────────────────────────────────────────────────────
 
