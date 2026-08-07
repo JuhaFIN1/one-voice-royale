@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.94"
+APP_VERSION = "1.3.95"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================

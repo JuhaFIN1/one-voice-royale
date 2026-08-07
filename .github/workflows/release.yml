@@ -30,7 +30,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          pip install PyQt6 requests python-dotenv sounddevice numpy keyboard openai pyttsx3 edge-tts scipy deep-translator duckduckgo-search
+          pip install PyQt6 requests python-dotenv sounddevice numpy keyboard openai pyttsx3 edge-tts scipy deep-translator duckduckgo-search soco
           pip install pvporcupine || true
           pip install faster-whisper || true
         shell: pwsh
@@ -48,12 +48,15 @@ jobs:
             --hidden-import pyttsx3.drivers `
             --hidden-import pyttsx3.drivers.sapi5 `
             --hidden-import comtypes.stream `
+            --hidden-import xmltodict `
             --collect-all edge_tts `
             --collect-all sounddevice `
             --collect-all certifi `
             --collect-all duckduckgo_search `
             --collect-all faster_whisper `
             --collect-all ctranslate2 `
+            --collect-all soco `
+            --collect-all ifaddr `
             --noconfirm `
             ai_voice_app.py
         shell: pwsh
@@ -135,7 +138,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller Pillow
-          pip install PyQt6 requests python-dotenv sounddevice numpy openai pyttsx3 edge-tts scipy deep-translator duckduckgo-search
+          pip install PyQt6 requests python-dotenv sounddevice numpy openai pyttsx3 edge-tts scipy deep-translator duckduckgo-search soco
           pip install pvporcupine || true
           pip install faster-whisper || true
 
@@ -165,6 +168,7 @@ jobs:
             --hidden-import pyttsx3.drivers \
             --hidden-import pyttsx3.drivers.nsss \
             --hidden-import PyQt6.sip \
+            --hidden-import xmltodict \
             --collect-all edge_tts \
             --collect-all sounddevice \
             --collect-all _sounddevice_data \
@@ -173,6 +177,8 @@ jobs:
             --collect-all duckduckgo_search \
             --collect-all faster_whisper \
             --collect-all ctranslate2 \
+            --collect-all soco \
+            --collect-all ifaddr \
             --icon "iconimage.icns" \
             --noconfirm \
             ai_voice_app.py
@@ -257,7 +263,7 @@ jobs:
           X86_PY="/usr/local/opt/python@3.11/bin/python3.11"
           arch -x86_64 $X86_PY -m pip install --upgrade pip
           arch -x86_64 $X86_PY -m pip install pyinstaller Pillow
-          arch -x86_64 $X86_PY -m pip install PyQt6 requests python-dotenv sounddevice numpy openai pyttsx3 edge-tts scipy deep-translator duckduckgo-search
+          arch -x86_64 $X86_PY -m pip install PyQt6 requests python-dotenv sounddevice numpy openai pyttsx3 edge-tts scipy deep-translator duckduckgo-search soco
           arch -x86_64 $X86_PY -m pip install pvporcupine || true
           arch -x86_64 $X86_PY -m pip install faster-whisper || true
 
@@ -288,6 +294,7 @@ jobs:
             --hidden-import pyttsx3.drivers \
             --hidden-import pyttsx3.drivers.nsss \
             --hidden-import PyQt6.sip \
+            --hidden-import xmltodict \
             --collect-all edge_tts \
             --collect-all sounddevice \
             --collect-all _sounddevice_data \
@@ -296,6 +303,8 @@ jobs:
             --collect-all duckduckgo_search \
             --collect-all faster_whisper \
             --collect-all ctranslate2 \
+            --collect-all soco \
+            --collect-all ifaddr \
             --icon "iconimage.icns" \
             --noconfirm \
             ai_voice_app.py
