@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.99"
+APP_VERSION = "1.3.100"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -2559,6 +2559,10 @@ class SoundboardButton(QWidget):
             self._data["sonos_speakers"] = selected
             self._refresh()
             self.data_changed.emit(self.slot_index)
+            # data_changed -> _sb_data_handler persists soundboard_pages, but the Sonos
+            # tab's shortcut grid is a separate widget that needs an explicit rebuild.
+            if hasattr(app, "_sonos_refresh_soundboard_shortcuts"):
+                app._sonos_refresh_soundboard_shortcuts()
 
     def _assign_ha_players(self):
         """Open dialog to assign HA media_player entities to this soundboard slot."""
@@ -4814,6 +4818,28 @@ class App(QWidget):
         painter.end()
         return QIcon(pixmap)
 
+    def create_sonos_icon(self) -> QIcon:
+        """Small original 'network speaker' glyph (equalizer bars in a dark rounded
+        tile) used to mark Sonos-related rows/buttons — NOT a reproduction of Sonos'
+        trademarked logo. Drawn with fillRect only, matching create_flag_icon()'s
+        approach — PyQt6 strict-mode crashes on setBrush/drawEllipse, and this avoids
+        bundling an SVG asset that needs a Qt image-format plugin PyInstaller may not
+        include in the frozen build."""
+        pixmap = QPixmap(20, 20)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        tile = QColor(10, 15, 30)
+        accent = QColor(0, 200, 210)
+        painter.fillRect(1, 1, 18, 18, tile)
+        painter.fillRect(0, 0, 18, 18, tile)
+        painter.fillRect(4, 13, 3, 5, accent)
+        painter.fillRect(8, 9, 3, 9, accent)
+        painter.fillRect(12, 4, 3, 14, accent)
+        painter.fillRect(16, 8, 2, 10, accent)
+        painter.end()
+        return QIcon(pixmap)
+
     def build_language_icons(self):
         icons = {}
         for lang, country_code in LANG_FLAG_CODES.items():
@@ -6205,6 +6231,29 @@ class App(QWidget):
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(T("color:@BORDER; margin-top:6px; margin-bottom:2px;"))
+        layout.addWidget(sep)
+
+        sb_hdr = QLabel("SOUNDBOARD → SONOS")
+        sb_hdr.setStyleSheet(T(
+            "border:none; font-size:11px; font-weight:700; letter-spacing:0.5px; color:@TEXT_FAINT;"))
+        layout.addWidget(sb_hdr)
+
+        self._sonos_shortcuts_scroll = QScrollArea()
+        self._sonos_shortcuts_scroll.setWidgetResizable(True)
+        self._sonos_shortcuts_scroll.setFixedHeight(90)
+        self._sonos_shortcuts_scroll.setStyleSheet(T(
+            "QScrollArea { background:@BG_DEEP; border:1px solid @BORDER; border-radius:6px; }"))
+        self._sonos_shortcuts_container = QWidget()
+        self._sonos_shortcuts_container.setStyleSheet("background: transparent;")
+        self._sonos_shortcuts_layout = QGridLayout(self._sonos_shortcuts_container)
+        self._sonos_shortcuts_layout.setContentsMargins(8, 6, 8, 6)
+        self._sonos_shortcuts_layout.setSpacing(6)
+        self._sonos_shortcuts_scroll.setWidget(self._sonos_shortcuts_container)
+        layout.addWidget(self._sonos_shortcuts_scroll)
+
         self._sonos_speaker_rows: dict = {}
         # Remember previously discovered speakers across restarts — don't force the user
         # to press "Hae kaiuttimet" again just to see/target speakers found last session.
@@ -6220,7 +6269,117 @@ class App(QWidget):
             # Silent background refresh so volume/group controls work without a manual click
             # (remembered entries have no live volume/coordinator info until this completes).
             self._sonos_discover()
+        self._sonos_refresh_soundboard_shortcuts()
         return frame
+
+    def _sonos_refresh_soundboard_shortcuts(self):
+        """Show a clickable icon for every soundboard slot that has Sonos speakers
+        assigned (via the slot's right-click → "Sonos-kaiuttimet…" editor), so those
+        clips can be triggered straight from the Sonos tab. Re-run this whenever a
+        slot's Sonos assignment changes (see SoundboardButton._assign_sonos_speakers)."""
+        if not hasattr(self, "_sonos_shortcuts_layout"):
+            return
+        while self._sonos_shortcuts_layout.count():
+            item = self._sonos_shortcuts_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        matches = []
+        for page_idx, page in enumerate(self.settings.get("soundboard_pages", []) or []):
+            for slot_idx, slot in enumerate(page.get("slots", []) or []):
+                if slot.get("sonos_speakers") and slot.get("file"):
+                    matches.append((page_idx, slot_idx, slot))
+
+        if not matches:
+            empty_lbl = QLabel(
+                "Ei Sonos-kohdistettuja klippejä. Oikeaklikkaa soundboard-nappia "
+                "(Muokkaa-tila) → \"Sonos-kaiuttimet…\"."
+            )
+            empty_lbl.setWordWrap(True)
+            empty_lbl.setStyleSheet(T("color:@TEXT_FAINT; font-size:11px; border:none;"))
+            self._sonos_shortcuts_layout.addWidget(empty_lbl, 0, 0)
+            return
+
+        _cols = 6
+        for i, (page_idx, slot_idx, slot) in enumerate(matches):
+            btn = QToolButton()
+            btn.setText(slot.get("name", f"Slot {slot_idx + 1}"))
+            btn.setToolTip(slot.get("name", ""))
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            btn.setFixedSize(72, 64)
+            img_path = slot.get("image", "")
+            if img_path and os.path.exists(img_path):
+                btn.setIcon(QIcon(img_path))
+            else:
+                btn.setIcon(self.create_sonos_icon())
+            btn.setIconSize(QSize(28, 28))
+            btn.setStyleSheet(T(
+                "QToolButton { background:@BG_RAISED; border:1px solid @BORDER; border-radius:6px;"
+                " color:@TEXT_DIM; font-size:9px; }"
+                "QToolButton:hover { border-color:@BLUE_BRIGHT; color:@TEXT; }"
+            ))
+            btn.clicked.connect(lambda _checked=False, pi=page_idx, si=slot_idx: self._sonos_pick_speaker_and_play(pi, si))
+            self._sonos_shortcuts_layout.addWidget(btn, i // _cols, i % _cols)
+
+    def _sonos_pick_speaker_and_play(self, page_idx: int, slot_idx: int):
+        if not self._sonos_speakers:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "Ei Sonos-kaiuttimia haettu",
+                "Hae ensin kaiuttimet Sonos-välilehden \"Hae kaiuttimet\" -napista."
+            )
+            return
+        pages = self.settings.get("soundboard_pages", []) or []
+        if page_idx >= len(pages):
+            return
+        slots = pages[page_idx].get("slots", []) or []
+        if slot_idx >= len(slots):
+            return
+        slot = slots[slot_idx]
+
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QDialogButtonBox, QCheckBox, QLabel
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Valitse Sonos-kaiutin — {slot.get('name', 'Slot')}")
+        dlg.resize(320, 260)
+        dlg.setStyleSheet(
+            "QDialog { background: #05070f; color: #b9c5e6; }"
+            "QCheckBox { color: #b9c5e6; font-size: 13px; padding: 4px; }"
+            "QPushButton { background: #101a36; border: 1px solid #1c2c52; border-radius: 5px;"
+            " color: #b9c5e6; padding: 6px 16px; font-size: 12px; }"
+            "QPushButton:hover { background: #6aa8ff; border-color: #6aa8ff; }"
+        )
+        vbox = QVBoxLayout(dlg)
+        vbox.setContentsMargins(16, 12, 16, 12)
+        vbox.setSpacing(6)
+        lbl = QLabel("Mihin kaiuttimeen tämä klippi soi nyt:")
+        lbl.setStyleSheet("color: #b9c5e6; font-size: 12px; font-weight: 600; padding-bottom: 4px;")
+        vbox.addWidget(lbl)
+
+        saved_uids = set(slot.get("sonos_speakers", []))
+        checkboxes = []
+        for sp in self._sonos_speakers:
+            uid = sp.get("uid", "")
+            cb = QCheckBox(sp.get("name", "") or uid)
+            cb.setChecked(uid in saved_uids)
+            cb.setProperty("uid", uid)
+            vbox.addWidget(cb)
+            checkboxes.append(cb)
+
+        vbox.addStretch()
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        vbox.addWidget(btns)
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            selected = [cb.property("uid") for cb in checkboxes if cb.isChecked()]
+            if not selected:
+                return
+            local_ip = _get_local_ip()
+            audio_url = (f"http://{local_ip}:{StreamDeckHttpServer.PORT}"
+                         f"/soundboard/audio/{page_idx}/{slot_idx}")
+            self._push_to_sonos(selected, audio_url)
 
     def _sonos_discover(self):
         self._sonos_discover_btn.setEnabled(False)
