@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.98"
+APP_VERSION = "1.3.99"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -381,6 +381,7 @@ DEFAULT_SETTINGS = {
     "sonos_enabled": False,
     "sonos_speech_targets": [],
     "sonos_speaker_names": {},
+    "sonos_speaker_ips": {},
     "voice_fx_output_device": None,
     "voice_fx_monitor_device": None,
     "voice_fx_hear_myself": False,
@@ -1698,6 +1699,10 @@ class SonosManager:
     def __init__(self):
         self._by_uid: dict[str, "soco.SoCo"] = {}
         self._lock = threading.Lock()
+        # uid -> last-known IP, seeded from settings at startup and refreshed after every
+        # discover() — lets a "remembered" speaker (shown before any scan completed this
+        # session) be reached immediately instead of silently no-op'ing until the next scan.
+        self.ip_hints: dict[str, str] = {}
 
     def discover(self, timeout: float = 5.0) -> list[dict]:
         """Scan the LAN for Sonos speakers. Returns a list of speaker info dicts
@@ -1724,7 +1729,22 @@ class SonosManager:
 
     def _get(self, uid: str):
         with self._lock:
-            return self._by_uid.get(uid)
+            sp = self._by_uid.get(uid)
+        if sp is not None:
+            return sp
+        # Not seen by discover() yet this session — try the last-known IP.
+        # soco.SoCo(ip) does no network I/O in its constructor, so this is cheap
+        # and lets a "remembered" speaker work immediately, not just after a scan.
+        ip = self.ip_hints.get(uid)
+        if not ip:
+            return None
+        try:
+            sp = soco.SoCo(ip)
+            with self._lock:
+                self._by_uid[uid] = sp
+            return sp
+        except Exception:
+            return None
 
     def join(self, uid: str, target_uid: str) -> None:
         speaker = self._get(uid)
@@ -1753,31 +1773,39 @@ class SonosManager:
             if speaker is not None:
                 speaker.volume = max(0, min(100, round(base_vol * scale)))
 
-    def _coordinators_for(self, uids: list[str]) -> list:
+    def _coordinators_for(self, uids: list[str]) -> tuple[list, list[str]]:
         """Resolve a uid list down to the unique group-coordinator speaker objects.
         Only a group's coordinator accepts transport commands (play/stop) in Sonos'
-        UPnP model — sending them to non-coordinator members fails or is ignored."""
+        UPnP model — sending them to non-coordinator members fails or is ignored.
+        Returns (coordinator_objects, uids_that_could_not_be_resolved_at_all)."""
         coords = {}
+        missing = []
         for uid in uids:
             speaker = self._get(uid)
             if speaker is None:
+                missing.append(uid)
                 continue
             try:
                 coord = speaker.group.coordinator or speaker
             except Exception:
                 coord = speaker
             coords[coord.uid] = coord
-        return list(coords.values())
+        return list(coords.values()), missing
 
-    def play_uri(self, uids: list[str], url: str, title: str = "One Voice Royale") -> None:
-        for coord in self._coordinators_for(uids):
+    def play_uri(self, uids: list[str], url: str, title: str = "One Voice Royale") -> list[str]:
+        """Returns the uids that could not be reached (caller should surface this —
+        a target the app can't resolve should never fail silently)."""
+        coords, missing = self._coordinators_for(uids)
+        for coord in coords:
             try:
                 coord.play_uri(url, title=title)
             except Exception:
                 pass
+        return missing
 
-    def stop(self, uids: list[str]) -> None:
-        for coord in self._coordinators_for(uids):
+    def stop(self, uids: list[str]) -> list[str]:
+        coords, missing = self._coordinators_for(uids)
+        for coord in coords:
             try:
                 coord.stop()
             except Exception:
@@ -5080,6 +5108,10 @@ class App(QWidget):
 
         # Sonos speaker control — must exist before the Sonos tab is built below
         self._sonos = SonosManager()
+        # Seed last-known IPs immediately so a "remembered" speaker (shown before any
+        # scan runs this session) can be reached right away instead of needing to wait
+        # for the background discover() to finish.
+        self._sonos.ip_hints = dict(self.settings.get("sonos_speaker_ips", {}))
         self._sonos_tts_cache: bytes | None = None
         self._sonos_speakers: list[dict] = []  # last discovery result — {uid,name,ip,volume,coordinator_uid}
 
@@ -6213,6 +6245,8 @@ class App(QWidget):
             if kind == "ok":
                 self._sonos_speakers = payload
                 self.settings["sonos_speaker_names"] = {sp["uid"]: sp["name"] for sp in payload}
+                self.settings["sonos_speaker_ips"] = {sp["uid"]: sp["ip"] for sp in payload}
+                self._sonos.ip_hints = dict(self.settings["sonos_speaker_ips"])
                 save_settings(self.settings)
                 self._sonos_status_lbl.setText(
                     f"{len(payload)} kaiutinta löytyi." if payload
@@ -7683,7 +7717,13 @@ class App(QWidget):
 
         def _run():
             try:
-                self._sonos.play_uri(uids, audio_url)
+                missing = self._sonos.play_uri(uids, audio_url)
+                if missing:
+                    names = self.settings.get("sonos_speaker_names", {})
+                    missing_names = ", ".join(names.get(u, u) for u in missing)
+                    self.append_status(
+                        f"Sonos: ei tavoitettu — {missing_names} (paina Hae kaiuttimet)"
+                    )
             except Exception as e:
                 self.append_status(f"Sonos-virhe: {e}")
 
