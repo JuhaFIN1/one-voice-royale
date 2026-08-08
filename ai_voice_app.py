@@ -347,7 +347,7 @@ EDGE_VOICES = {
     "Arabic": "ar-SA-ZariyahNeural",
 }
 
-APP_VERSION = "1.3.110"
+APP_VERSION = "1.3.111"
 GITHUB_REPO = "JuhaFIN1/one-voice-royale"
 
 # =========================
@@ -2168,6 +2168,43 @@ def _migrate_audio_to_mp3(status_cb=None, found_cb=None) -> tuple[int, int]:
         save_history_data(history_data)
 
     return converted, failed
+
+
+def _repoint_orphaned_media_refs(settings: dict, history_data: dict) -> int:
+    """Repair soundboard/favorites references left pointing at a deleted .wav.
+    Restoring app_settings.json from a backup taken *before* _migrate_audio_to_mp3 ran
+    (e.g. after a corrupted-settings recovery) brings back .wav paths whose files were
+    already converted and removed from disk — the .mp3 sibling still exists under the
+    same basename, so buttons just need repointing instead of going silently silent.
+    Cheap (no ffmpeg, just os.path.exists checks) — safe to call on every app start.
+    Mutates settings/history_data in place. Returns number of references repaired."""
+    fixed = 0
+
+    def _walk(slots: list):
+        nonlocal fixed
+        for slot in slots:
+            path = slot.get("file", "")
+            if path and path.lower().endswith(".wav") and not os.path.exists(path):
+                mp3_path = os.path.splitext(path)[0] + ".mp3"
+                if os.path.exists(mp3_path):
+                    slot["file"] = mp3_path
+                    fixed += 1
+            if slot.get("folder_slots"):
+                _walk(slot["folder_slots"])
+
+    for page in settings.get("soundboard_pages", []):
+        _walk(page.get("slots", []))
+
+    for entry in history_data.get("favorites", []):
+        if isinstance(entry, dict):
+            path = entry.get("audio_file", "")
+            if path and path.lower().endswith(".wav") and not os.path.exists(path):
+                mp3_path = os.path.splitext(path)[0] + ".mp3"
+                if os.path.exists(mp3_path):
+                    entry["audio_file"] = mp3_path
+                    fixed += 1
+
+    return fixed
 
 
 def _sb_import_image(src_path: str, page_index: int, slot_index: int) -> tuple[str, int, int]:
@@ -5400,6 +5437,18 @@ class App(QWidget):
         self.history_data = load_history_data()
         self.history = self.history_data.get("history", [])
         self.favorites = self.history_data.get("favorites", [])
+
+        # Self-heal soundboard/favorites entries left pointing at a deleted .wav —
+        # can happen if app_settings.json ever gets restored from a backup taken
+        # before _migrate_audio_to_mp3 ran (see _repoint_orphaned_media_refs docstring).
+        _orphans_fixed = _repoint_orphaned_media_refs(self.settings, self.history_data)
+        if _orphans_fixed:
+            save_settings(self.settings)
+            save_history_data(self.history_data)
+            # status_text isn't built yet at this point in __init__ — defer the log line
+            QTimer.singleShot(0, lambda n=_orphans_fixed: self.append_status(
+                f"Korjattiin {n} äänitiedostoviittausta (.wav -> .mp3)"))
+
         self.refresh_history_views()
 
         self.populate_output_devices()
